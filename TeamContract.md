@@ -10,7 +10,7 @@
 
 | Full name | Student ID | Email | Preferred contact | Role |
 | :--- | :--- | :--- | :--- | :--- |
-| [Member 1 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
+| Huỳnh Kiến Đạt | 25127292 | hkdat2532@clc.fitus.edu.vn | Messenger | Architect & Team leader |
 | [Member 2 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
 | [Member 3 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
 | [Member 4 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
@@ -29,7 +29,7 @@
 ## 3. Roles and Responsibilities
 | Member | Role | Strengths | Weaknesses |
 | :--- | :--- | :--- | :--- |
-| [Member 1 Name] | [Role] | [Strengths] | [Weaknesses] |
+| Huỳnh Kiến Đạt | Architect & team leader | prepare works well | tend to procastinate |
 | [Member 2 Name] | [Role] | [Strengths] | [Weaknesses] |
 | [Member 3 Name] | [Role] | [Strengths] | [Weaknesses] |
 | [Member 4 Name] | [Role] | [Strengths] | [Weaknesses] |
@@ -116,7 +116,7 @@ By signing below, each member confirms that they have read, understood, and agre
 
 | No. | Name | Student ID | Date | Signature |
 | :---: | :--- | :--- | :---: | :---: |
-| 1 | [Full Name] | [Student ID] | [DD/MM/YYYY] | [Signature] |
+| 1 | Huỳnh Kiến Đạt | 25127292 | [12/10/2026] | DAT |
 | 2 | [Full Name] | [Student ID] | [DD/MM/YYYY] | [Signature] |
 | 3 | [Full Name] | [Student ID] | [DD/MM/YYYY] | [Signature] |
 | 4 | [Full Name] | [Student ID] | [DD/MM/YYYY] | [Signature] |
