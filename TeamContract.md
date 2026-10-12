@@ -11,7 +11,7 @@
 | Full name | Student ID | Email | Preferred contact | Role |
 | :--- | :--- | :--- | :--- | :--- |
 | Huỳnh Kiến Đạt | 25127292 | hkdat2532@clc.fitus.edu.vn | Messenger | Architect & Team leader |
-| [Member 2 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
+| Mai Hoằn Sơn | 25127490 | mhson2511@clc.fitus.edu.vn | Messenger | Data and Logic |
 | [Member 3 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
 | [Member 4 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
 | [Member 5 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
@@ -30,7 +30,7 @@
 | Member | Role | Strengths | Weaknesses |
 | :--- | :--- | :--- | :--- |
 | Huỳnh Kiến Đạt | Architect & team leader | prepare works well | tend to procastinate |
-| [Member 2 Name] | [Role] | [Strengths] | [Weaknesses] |
+| Mai Hoằn Sơn | Data and Logic | Handles many tasks and often supports teammates | Often misses messages |
 | [Member 3 Name] | [Role] | [Strengths] | [Weaknesses] |
 | [Member 4 Name] | [Role] | [Strengths] | [Weaknesses] |
 | [Member 5 Name] | [Role] | [Strengths] | [Weaknesses] |
