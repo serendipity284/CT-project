@@ -14,7 +14,7 @@
 | Mai Hoằn Sơn | 25127490 | mhson2511@clc.fitus.edu.vn | Messenger | Data and Logic |
 | Nguyễn Minh Anh | 25127265 | nmanh2506@clc.fitus.edu.vn | Messenger | UI |
 | Nguyễn Phúc Hậu | 25127047 | nphau2513@clc.fitus.edu.vn | Messenger | AI/LLM |
-| [Member 5 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
+| Bùi Ngọc Minh An | 25127177 | bnman2516@clc.fitus.edu.vn | Messenger | Evaluation Lead |
 
 ---
 
@@ -33,7 +33,7 @@
 | Mai Hoằn Sơn | Data and Logic | Handles many tasks and often supports teammates | Often misses messages |
 | Nguyễn Minh Anh | UI | Hard-working in learning new things | Often leaves work until the deadline |
 | Nguyễn Phúc Hậu | AI/LLM | Productive and always on time | Has difficulty presenting own opinions |
-| [Member 5 Name] | [Role] | [Strengths] | [Weaknesses] |
+| Bùi Ngọc Minh An | Evaluation Lead | Careful | Communicates little |
 
 * **Role changes:** Roles may be changed depending on each member's needs and abilities. Any change must follow the procedure in Section 11 (Changing the Contract).
 
@@ -120,4 +120,4 @@ By signing below, each member confirms that they have read, understood, and agre
 | 2 | Mai Hoằn Sơn | 25127490 | [13/10/2026] | SON |
 | 3 | Nguyễn Minh Anh | 25127265 | [13/10/2026] | ANH |
 | 4 | Nguyễn Phúc Hậu | 25127047 | [13/10/2026] | HAU |
-| 5 | [Full Name] | [Student ID] | [DD/MM/YYYY] | [Signature] |
+| 5 | Bùi Ngọc Minh An | 25127177 | [13/10/2026] | AN |
