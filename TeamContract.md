@@ -12,8 +12,8 @@
 | :--- | :--- | :--- | :--- | :--- |
 | Huỳnh Kiến Đạt | 25127292 | hkdat2532@clc.fitus.edu.vn | Messenger | Architect & Team leader |
 | Mai Hoằn Sơn | 25127490 | mhson2511@clc.fitus.edu.vn | Messenger | Data and Logic |
-| [Member 3 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
-| [Member 4 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
+| Nguyễn Minh Anh | 25127265 | nmanh2506@clc.fitus.edu.vn | Messenger | UI |
+| Nguyễn Phúc Hậu | 25127047 | nphau2513@clc.fitus.edu.vn | Messenger | AI/LLM |
 | [Member 5 Name] | [Student ID] | [Email] | [Messenger/...] | [Role] |
 
 ---
@@ -31,8 +31,8 @@
 | :--- | :--- | :--- | :--- |
 | Huỳnh Kiến Đạt | Architect & team leader | prepare works well | tend to procastinate |
 | Mai Hoằn Sơn | Data and Logic | Handles many tasks and often supports teammates | Often misses messages |
-| [Member 3 Name] | [Role] | [Strengths] | [Weaknesses] |
-| [Member 4 Name] | [Role] | [Strengths] | [Weaknesses] |
+| Nguyễn Minh Anh | UI | Hard-working in learning new things | Often leaves work until the deadline |
+| Nguyễn Phúc Hậu | AI/LLM | Productive and always on time | Has difficulty presenting own opinions |
 | [Member 5 Name] | [Role] | [Strengths] | [Weaknesses] |
 
 * **Role changes:** Roles may be changed depending on each member's needs and abilities. Any change must follow the procedure in Section 11 (Changing the Contract).
@@ -118,6 +118,6 @@ By signing below, each member confirms that they have read, understood, and agre
 | :---: | :--- | :--- | :---: | :---: |
 | 1 | Huỳnh Kiến Đạt | 25127292 | [12/10/2026] | DAT |
 | 2 | Mai Hoằn Sơn | 25127490 | [13/10/2026] | SON |
-| 3 | [Full Name] | [Student ID] | [DD/MM/YYYY] | [Signature] |
-| 4 | [Full Name] | [Student ID] | [DD/MM/YYYY] | [Signature] |
+| 3 | Nguyễn Minh Anh | 25127265 | [13/10/2026] | ANH |
+| 4 | Nguyễn Phúc Hậu | 25127047 | [13/10/2026] | HAU |
 | 5 | [Full Name] | [Student ID] | [DD/MM/YYYY] | [Signature] |
