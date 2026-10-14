@@ -1,4 +1,4 @@
-# Exercise 3 – Individual Proposal for the Course Project
+# Individual Proposal for the Course Project
 
 ## Project Title
 
