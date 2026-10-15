@@ -5,7 +5,7 @@
 
 ## 1. Team Information
 * **Team name:** HADAS
-* **Project title:** University Life Assistant
+* **Project title:** Health & Fitness Assistant.
 * **Course:** Computational Thinking (class 25C05)
 
 | Full name | Student ID | Email | Preferred contact | Role |
@@ -19,11 +19,10 @@
 ---
 
 ## 2. Team Goals and Expectations
-* **Project goal 1:** Create a virtual assistant that can support daily university tasks, such as study scheduling and answering questions about school regulations.
-* **Project goal 2:** Apply computational thinking (understand → decompose → represent → decide → execute → verify → improve) to turn ambiguous student requests into a reliable, well-tested process, focusing on sound judgment and evidence rather than model complexity.
+* **Project goal 1:** Create a Smart AI Health & Fitness Virtual Assistant that supports users in daily health management by generating personalized meal/nutrition plans, tailoring adaptive workout routines, providing real-time AI exercise posture/form analysis via computer vision, and suggesting nearby budget-friendly healthy eateries.
+* **Project goal 2:** Apply computational thinking (understand → decompose → represent → decide → execute → verify → improve) to turn ambiguous health and fitness requests into a reliable, well-tested computational system, combining deterministic nutritional/scheduling logic with AI vision and LLM reasoning rather than relying solely on model complexity.
 * **Target grade / quality level:** Target grade: 9/10. All core features work correctly, code follows the team’s standards, and documents are complete and submitted on time.
 * **Effort commitment:** Every member commits full effort (100%) to the project and agrees to carry an equal share of the workload.
-
 ---
 
 ## 3. Roles and Responsibilities
@@ -116,7 +115,7 @@ By signing below, each member confirms that they have read, understood, and agre
 
 | No. | Name | Student ID | Date | Signature |
 | :---: | :--- | :--- | :---: | :---: |
-| 1 | Huỳnh Kiến Đạt | 25127292 | [12/10/2026] | DAT |
+| 1 | Huỳnh Kiến Đạt | 25127292 | [15/10/2026] | DAT |
 | 2 | Mai Hoằn Sơn | 25127490 | [13/10/2026] | SON |
 | 3 | Nguyễn Minh Anh | 25127265 | [13/10/2026] | ANH |
 | 4 | Nguyễn Phúc Hậu | 25127047 | [13/10/2026] | HAU |
