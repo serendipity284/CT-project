@@ -93,7 +93,7 @@
 
 | Tuần | Thành viên | Công cụ | Mục đích sử dụng | Kết quả AI cung cấp | Phương pháp kiểm chứng & Chỉnh sửa của nhóm |
 | :---: | :--- | :---: | :--- | :--- | :--- |
-| | | | | | |
+| Tuần 1 | Huỳnh Kiến Đạt | Claude & Gemini | Tham khảo format contract team và xem hướng dẫn tạo logbook  | Format contract team và logbook dạng markdown | cung cấp thông tin và chỉnh sửa nội dung liên quan |
 | | | | | | |
 | | | | | | |
 
