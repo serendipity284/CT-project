@@ -116,7 +116,7 @@ By signing below, each member confirms that they have read, understood, and agre
 | No. | Name | Student ID | Date | Signature |
 | :---: | :--- | :--- | :---: | :---: |
 | 1 | Huỳnh Kiến Đạt | 25127292 | [15/10/2026] | DAT |
-| 2 | Mai Hoằn Sơn | 25127490 | [13/10/2026] | SON |
+| 2 | Mai Hoằn Sơn | 25127490 | [15/10/2026] | SON |
 | 3 | Nguyễn Minh Anh | 25127265 | [15/10/2026] | ANH |
-| 4 | Nguyễn Phúc Hậu | 25127047 | [13/10/2026] | HAU |
-| 5 | Bùi Ngọc Minh An | 25127177 | [13/10/2026] | AN |
+| 4 | Nguyễn Phúc Hậu | 25127047 | [15/10/2026] | HAU |
+| 5 | Bùi Ngọc Minh An | 25127177 | [15/10/2026] | AN |
