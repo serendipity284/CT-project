@@ -1,5 +1,5 @@
 # TEAM CONTRACT
-**Team HADAS | University Life Assistant**
+**Team HADAS | Health & Fitness Assistant**
 
 ---
 
