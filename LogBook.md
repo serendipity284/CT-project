@@ -70,11 +70,11 @@
 #### 2. Phân công công việc & Trạng thái (Task Allocation & Status):
 | Thành viên | Nhiệm vụ được giao | Issue / PR liên quan | Trạng thái |
 | :--- | :--- | :---: | :---: |
-| Bùi Ngọc Minh An | Soạn nội dung Thuyết trình Phần 1 (Vấn đề & Phạm vi bài toán) | [#13](https://github.com/serendipity284/CT-project/issues/13) | In Progress |
-| Nguyễn Minh Anh | Soạn nội dung Thuyết trình Phần 2 (Ứng dụng 4 trụ cột CT) & Thiết kế Slide PowerPoint Proposal | [#14](https://github.com/serendipity284/CT-project/issues/14) | Completed |
-| Mai Hoằn Sơn | Soạn nội dung Thuyết trình Phần 2 (Ứng dụng 4 trụ cột CT) & Thiết kế Slide PowerPoint Proposal | [#15](https://github.com/serendipity284/CT-project/issues/15) | Completed |
-| Huỳnh Kiến Đạt | Soạn nội dung Thuyết trình Phần 3 (Giải pháp kỹ thuật & Kiến trúc hệ thống Solution) | [#16](https://github.com/serendipity284/CT-project/issues/16) | Completed |
-| Nguyễn Phúc Hậu | Soạn nội dung Thuyết trình Phần 3 (Giải pháp kỹ thuật & Module Vision/AI Solution) | [#17](https://github.com/serendipity284/CT-project/issues/17) | Completed |
+| Bùi Ngọc Minh An | Soạn nội dung Thuyết trình Phần 1 (Vấn đề & Phạm vi bài toán) | [#8]https://github.com/serendipity284/CT-project/issues/8 | Completed |
+| Nguyễn Minh Anh | Soạn nội dung Thuyết trình Phần 2 (Ứng dụng 4 trụ cột CT) & Thiết kế Slide PowerPoint Proposal | [#11] & [#9] (https://github.com/serendipity284/CT-project/issues/9) & https://github.com/serendipity284/CT-project/issues/11 | Completed |
+| Mai Hoằn Sơn | Soạn nội dung Thuyết trình Phần 2 (Ứng dụng 4 trụ cột CT) & Thiết kế Slide PowerPoint Proposal | [#11] & [#9] (https://github.com/serendipity284/CT-project/issues/9) & https://github.com/serendipity284/CT-project/issues/11 | Completed |
+| Huỳnh Kiến Đạt | Soạn nội dung Thuyết trình Phần 3 (Giải pháp kỹ thuật & Kiến trúc hệ thống Solution) | [#10]https://github.com/serendipity284/CT-project/issues/10 | Completed |
+| Nguyễn Phúc Hậu | Soạn nội dung Thuyết trình Phần 3 (Giải pháp kỹ thuật & Module Vision/AI Solution) | [#10](https://github.com/serendipity284/CT-project/issues/10) | Completed |
 
 #### 3. Tóm tắt cuộc họp nhóm (Meeting Notes):
 - **Thời gian & Địa điểm:** 21:30, Ngày 17/10/2026 (Google Meet)
