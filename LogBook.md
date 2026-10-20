@@ -39,11 +39,11 @@
 #### 2. Phân công công việc & Trạng thái (Task Allocation & Status):
 | Thành viên | Nhiệm vụ được giao | Issue / PR liên quan | Trạng thái |
 | :--- | :--- | :---: | :---: |
-| Huỳnh Kiến Đạt | Thiết lập github nhóm & phác thảo pipeline | https://github.com/serendipity284/CT-project/issues/7 | Not finish|
-| Mai Hoằn Sơn | Thuật toán dinh dưỡng & xếp lịch | https://github.com/serendipity284/CT-project/issues/1 | Not finish |
-| Nguyễn Minh Anh | Dựng khung UI & lập danh mục rủi ro| https://github.com/serendipity284/CT-project/issues/3 | not finish |
-| Nguyễn Phúc Hậu | Chọn nền tảng LLM/API | https://github.com/serendipity284/CT-project/issues/2 | not finish |
-| Bùi Ngọc Minh An | Xác định bài toán & Tạo 8-12 use cases | https://github.com/serendipity284/CT-project/issues/4 | Not finish |
+| Huỳnh Kiến Đạt | Thiết lập github nhóm & phác thảo pipeline | https://github.com/serendipity284/CT-project/issues/7 |Completed|
+| Mai Hoằn Sơn | Thuật toán dinh dưỡng & xếp lịch | https://github.com/serendipity284/CT-project/issues/1 | Completed |
+| Nguyễn Minh Anh | Dựng khung UI & lập danh mục rủi ro| https://github.com/serendipity284/CT-project/issues/3 | Completed |
+| Nguyễn Phúc Hậu | Chọn nền tảng LLM/API | https://github.com/serendipity284/CT-project/issues/2 | Completed |
+| Bùi Ngọc Minh An | Xác định bài toán & Tạo 8-12 use cases | https://github.com/serendipity284/CT-project/issues/4 | Completed |
 
 #### 3. Tóm tắt cuộc họp nhóm (Meeting Notes):
 - **Thời gian & Địa điểm:** 22:00, Ngày 14/10/2026 (Google Meet)
@@ -60,30 +60,36 @@
 
 ---
 
-<!-- ### Tuần 2 (Từ ngày DD/MM đến DD/MM/2026)
+### Tuần 2 (Từ ngày 19/10 đến 25/10/2026)
 
 #### 1. Mục tiêu tuần (Weekly Goals):
-- [ ] 
+- Chuẩn bị nội dung và thiết kế Slide PowerPoint cho buổi thuyết trình Project Proposal vào thứ 4 (21/10/2026).
+- Hoàn thiện cấu trúc 3 phần thuyết trình: Problem/Scope, 4 Trụ cột CT, và System Solution.
+- Cập nhật chính thức TeamContract và Logbook theo đề tài mới (Hidden Eatery & Alley Navigation Assistant).
 
 #### 2. Phân công công việc & Trạng thái (Task Allocation & Status):
 | Thành viên | Nhiệm vụ được giao | Issue / PR liên quan | Trạng thái |
 | :--- | :--- | :---: | :---: |
-| Huỳnh Kiến Đạt | | | |
-| Mai Hoằn Sơn | | | |
-| Nguyễn Minh Anh | | | |
-| Nguyễn Phúc Hậu | | | |
-| Bùi Ngọc Minh An | | | |
+| Bùi Ngọc Minh An | Soạn nội dung Thuyết trình Phần 1 (Vấn đề & Phạm vi bài toán) | [#13](https://github.com/serendipity284/CT-project/issues/13) | In Progress |
+| Nguyễn Minh Anh | Soạn nội dung Thuyết trình Phần 2 (Ứng dụng 4 trụ cột CT) & Thiết kế Slide PowerPoint Proposal | [#14](https://github.com/serendipity284/CT-project/issues/14) | Completed |
+| Mai Hoằn Sơn | Soạn nội dung Thuyết trình Phần 2 (Ứng dụng 4 trụ cột CT) & Thiết kế Slide PowerPoint Proposal | [#15](https://github.com/serendipity284/CT-project/issues/15) | Completed |
+| Huỳnh Kiến Đạt | Soạn nội dung Thuyết trình Phần 3 (Giải pháp kỹ thuật & Kiến trúc hệ thống Solution) | [#16](https://github.com/serendipity284/CT-project/issues/16) | Completed |
+| Nguyễn Phúc Hậu | Soạn nội dung Thuyết trình Phần 3 (Giải pháp kỹ thuật & Module Vision/AI Solution) | [#17](https://github.com/serendipity284/CT-project/issues/17) | Completed |
 
 #### 3. Tóm tắt cuộc họp nhóm (Meeting Notes):
-- **Thời gian & Địa điểm:** HH:MM, Ngày DD/MM/2026
+- **Thời gian & Địa điểm:** 21:30, Ngày 17/10/2026 (Google Meet)
+- **Người chủ trì:** Huỳnh Kiến Đạt
 - **Nội dung thảo luận chính:**
-  - 
-- **Vấn đề phát sinh & Giải pháp:**
-  - 
+  - Thống nhất dàn ý cho bài Thuyết trình Proposal gồm 3 phần trọng tâm:
+    - **Phần 1 (Minh An):** Đặt vấn đề, viết ill-defined problem và well-defined problem
+    - **Phần 2 (Minh Anh & Sơn):** Phân tích bài toán qua 4 trụ cột Computational Thinking (Decomposition, Pattern Recognition, Abstraction, Algorithm Design).
+    - **Phần 3 (Đạt & Hậu):** Trình bày giải pháp hệ thống (quá trình xử lí input và trả output của hệ thống).
+  - Phân công **Minh Anh và Sơn** phụ trách thiết kế slide PowerPoint Proposal.
 
----
+#### 4. Quyết định kiến trúc / Kỹ thuật quan trọng (Architectural Decisions - ADR):
+- **Quyết định:** không có.
 
-> *(Tiếp tục nhân bản khung Tuần ở trên cho các tuần tiếp theo: Tuần 3 đến Tuần 10)*
+
 
 --- -->
 
