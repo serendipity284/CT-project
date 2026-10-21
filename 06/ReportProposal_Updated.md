@@ -126,7 +126,7 @@ Through **Abstraction**, real-world complexities—such as staff attitude, weath
 | **Intent Parsing** | \$f\_{\\text{NLU}}(\\text{Text Input}) \\rightarrow {\\text{Intent}, \\text{Entities}}\$ | Filler words, emotional cravings ("ngon ngon"), slang ("35 cành" \$\\rightarrow 35000\$). |
 | **Budget Checking** | \$S \= {v \\in \\text{Database} \\mid v.\\text{Price} \\le \\text{MaxBudget} \\land v.\\text{Status} \= \\text{'OPEN'}}\$ | Vendor ownership history, seating capacity, plastic/wooden tables, air conditioning. |
 | **Graph Routing** | Min Shortest Path \$f(n) \= g(n) \+ h(n)\$ on \$G(V, E)\$ | Power lines, wall paint/graffiti, weather conditions, roadside trash, ambient noise. |
-| **Ranking Score** | \$\\text{Score} \= (0.5 \\cdot \\text{Rating}) \- (0.3 \\cdot \\text{Distance}) \- (0.2 \\cdot \\text{Price})\$ | Long anecdotal text reviews, subjective complaints about waiting time, visual "charm". |
+| **Ranking Score** | S(r) \= w\_P x P\_r \+ w\_Q x Q\_r \+ w\_D x D\_r \+ w\_R x R\_r (this formula will be described in algorithm design part)  | Long anecdotal text reviews, subjective complaints about waiting time, visual "charm". |
 | **Landmark Matching** | \$\\text{MatchScore} \= f\_{\\text{match}}(I\_{\\text{cam}}, I\_{\\text{ref}}) \\ge \\theta\_{\\text{threshold}}\$ | Moving pedestrians, motorbikes driving past, cloud shadows, daytime/nighttime lighting glare. |
 | **Fallback System** | State Machine Exception Handling | Continuous processing of dark/blurry frames, complex 3D AR rendering overheads. |
 
