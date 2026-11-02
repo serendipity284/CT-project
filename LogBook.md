@@ -101,11 +101,11 @@
 #### 2. Phân công công việc & Trạng thái (Task Allocation & Status):
 | Thành viên | Nhiệm vụ được giao | Issue / PR liên quan | Trạng thái |
 | :--- | :--- | :---: | :---: |
-| Bùi Ngọc Minh An | Tìm công thức ranking | [#15]https://github.com/serendipity284/CT-project/issues/15 | In progress |
+| Bùi Ngọc Minh An | Tìm công thức ranking | [#15]https://github.com/serendipity284/CT-project/issues/15 | Finish |
 | Nguyễn Minh Anh | Tìm template UI | [#12] https://github.com/serendipity284/CT-project/issues/12 | In progess |
 | Mai Hoằn Sơn | Hoàn thiện database | [#13]https://github.com/serendipity284/CT-project/issues/13 | In progress |
-| Huỳnh Kiến Đạt | Tìm công thức ranking | [#15]https://github.com/serendipity284/CT-project/issues/15 | In progress |
-| Nguyễn Phúc Hậu | Chuẩn hóa dữ liệu | [#14]https://github.com/serendipity284/CT-project/issues/14 | In progress |
+| Huỳnh Kiến Đạt | Tìm công thức ranking | [#15]https://github.com/serendipity284/CT-project/issues/15 | Finish |
+| Nguyễn Phúc Hậu | Chuẩn hóa dữ liệu | [#14]https://github.com/serendipity284/CT-project/issues/14 | Finish |
 
 #### 3. Tóm tắt cuộc họp nhóm (Meeting Notes):
 - **Thời gian & Địa điểm:** 21:30, Ngày 25/10/2026 (Google Meet)
@@ -115,6 +115,27 @@
 - **Quyết định:** cả nhóm đồng thuận sử dụng MySQL làm database cho project. 
 
 
+### Tuần 4 (Từ ngày 2/11 đến 8/11/2026)
+
+#### 1. Mục tiêu tuần (Weekly Goals):
+-Thêm mục thành phần dị ứng trong database
+-xử lý bài toán ranking và lọc quán ăn 
+-xây dựng map tìm đường đi từ user đến quán ăn
+#### 2. Phân công công việc & Trạng thái (Task Allocation & Status):
+| Thành viên | Nhiệm vụ được giao | Issue / PR liên quan | Trạng thái |
+| :--- | :--- | :---: | :---: |
+| Bùi Ngọc Minh An | Xây dựng map | [#17]https://github.com/serendipity284/CT-project/issues/17 | In progress |
+| Nguyễn Minh Anh | Xây dựng map| [#17]https://github.com/serendipity284/CT-project/issues/17 | In progess |
+| Mai Hoằn Sơn | Xây dựng map | [#17]https://github.com/serendipity284/CT-project/issues/17| In progress |
+| Huỳnh Kiến Đạt | Ranking & lọc quán ăn | [#18]https://github.com/serendipity284/CT-project/issues/18 | In progress |
+| Nguyễn Phúc Hậu | Ranking & lọc quán ăn | [#18]https://github.com/serendipity284/CT-project/issues/18 | In progress |
+
+#### 3. Tóm tắt cuộc họp nhóm (Meeting Notes):
+- **Thời gian & Địa điểm:** 21:30, Ngày 1/11/2026 (Google Meet)
+- **Người chủ trì:** Huỳnh Kiến Đạt
+- **Nội dung thảo luận chính:** Công việc tuần 4
+#### 4. Quyết định kiến trúc / Kỹ thuật quan trọng (Architectural Decisions - ADR):
+- **Quyết định:** Cả nhóm quyết định xử lý thêm case dị ứng. 
 
 
 
