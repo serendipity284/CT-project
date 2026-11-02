@@ -1,6 +1,6 @@
 # TEAM LOGBOOK - PROJECT CSC10014
 **Tên nhóm / Team Name:** HADAS  
-**Tên dự án / Project Title:** University Life Assistant  
+**Tên dự án / Project Title:** Student Eatery Restaurant Assistant
 **Lớp / Course Class:** Computational Thinking (25C05)  
 **Repository (GitHub):** https://github.com/serendipity284/CT-project.git
 **Task Board (GitHub/Notion):** https://github.com/users/serendipity284/projects/1/views/1
@@ -59,7 +59,6 @@
 - **Lý do:** Đề tài mở rộng hơn và có thể tận dụng được các thuật toán tìm đường đi được học ở các môn trước (Data structure & Algorithm, toán tổ hợp) trong việc tìm các quán ăn healthy ở gần người dùng. 
 
 ---
-
 ### Tuần 2 (Từ ngày 19/10 đến 25/10/2026)
 
 #### 1. Mục tiêu tuần (Weekly Goals):
@@ -88,6 +87,34 @@
 
 #### 4. Quyết định kiến trúc / Kỹ thuật quan trọng (Architectural Decisions - ADR):
 - **Quyết định:** không có.
+
+
+
+### Tuần 3 (Từ ngày 26/10 đến 1/11/2026)
+
+#### 1. Mục tiêu tuần (Weekly Goals):
+-Hoàn thiện database (add google location cho các data) 
+-Tìm template UI 
+-Tìm công thức ranking
+-Chuẩn hóa dữ liệu input
+
+#### 2. Phân công công việc & Trạng thái (Task Allocation & Status):
+| Thành viên | Nhiệm vụ được giao | Issue / PR liên quan | Trạng thái |
+| :--- | :--- | :---: | :---: |
+| Bùi Ngọc Minh An | Tìm công thức ranking | [#15]https://github.com/serendipity284/CT-project/issues/15 | In progress |
+| Nguyễn Minh Anh | Tìm template UI | [#12] https://github.com/serendipity284/CT-project/issues/12 | In progess |
+| Mai Hoằn Sơn | Hoàn thiện database | [#13]https://github.com/serendipity284/CT-project/issues/13 | In progress |
+| Huỳnh Kiến Đạt | Tìm công thức ranking | [#15]https://github.com/serendipity284/CT-project/issues/15 | In progress |
+| Nguyễn Phúc Hậu | Chuẩn hóa dữ liệu | [#14]https://github.com/serendipity284/CT-project/issues/14 | In progress |
+
+#### 3. Tóm tắt cuộc họp nhóm (Meeting Notes):
+- **Thời gian & Địa điểm:** 21:30, Ngày 25/10/2026 (Google Meet)
+- **Người chủ trì:** Huỳnh Kiến Đạt
+- **Nội dung thảo luận chính:** Công việc tuần 3
+#### 4. Quyết định kiến trúc / Kỹ thuật quan trọng (Architectural Decisions - ADR):
+- **Quyết định:** cả nhóm đồng thuận sử dụng MySQL làm database cho project. 
+
+
 
 
 
