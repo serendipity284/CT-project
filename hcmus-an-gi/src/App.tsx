@@ -29,6 +29,7 @@ import {
   toggleSaveApi,
 } from "./lib/api";
 import {
+  apiPostChat,
   addHistory,
   addReview,
   getCurrentUser,
@@ -243,19 +244,70 @@ export default function App() {
     if (next.radiusM) setRadius(next.radiusM);
   }
 
-  function sendChat(text: string) {
-    const clean = text.trim();
-    if (!clean) return;
-    const result = replyFor(clean, intent);
-    setIntent(result.intent);
-    setTurns((t) => [...t, { role: "user", text: clean }, { role: "bot", text: result.say }]);
-    setDraft("");
-    if (result.ready) {
-      applyIntent(result.intent);
-      setTab("list");
-      void remember(clean);
+  async function sendChat(text: string) {
+  const clean = text.trim();
+  if (!clean) return;
+
+  setTurns(t => [
+    ...t,
+    { role: "user", text: clean }
+  ]);
+
+  setDraft("");
+
+  try {
+    if (useApi) {
+      const result = await apiPostChat(clean, {
+        campus: intent.campus,
+        budget: intent.budget,
+        radius_m: intent.radiusM
+      });
+
+      const nextIntent: Intent = {
+        campus: result.campus as Intent["campus"],
+        budget: result.budget,
+        radiusM: result.radius_m
+      };
+
+      setIntent(nextIntent);
+
+      setTurns(t => [
+        ...t,
+        { role: "bot", text: result.reply }
+      ]);
+
+      if (result.ready) {
+        applyIntent(nextIntent);
+        setTab("list");
+        void remember(clean);
+      }
+
+    } else {
+      // Chế độ offline vẫn sử dụng Regex cũ.
+      const result = replyFor(clean, intent);
+
+      setIntent(result.intent);
+
+      setTurns(t => [
+        ...t,
+        { role: "bot", text: result.say }
+      ]);
+
+      if (result.ready) {
+        applyIntent(result.intent);
+        setTab("list");
+      }
     }
+  } catch (error) {
+    setTurns(t => [
+      ...t,
+      {
+        role: "bot",
+        text: "Không thể xử lý yêu cầu. Bạn hãy kiểm tra kết nối backend."
+      }
+    ]);
   }
+}
 
   function reloadPlaces() {
     if (useApi) {
