@@ -5,12 +5,14 @@ Chay: uvicorn app:app --reload --port 8000
 
 from __future__ import annotations
 
+import unicodedata
 import math
 import os
 import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
+from pathlib import Path
 
 import mysql.connector
 from dotenv import load_dotenv
@@ -19,6 +21,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
+
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(ENV_PATH, override=True)
+from input_understanding.extractor import extract_intent
+from input_understanding.validator import validate_intent
+from input_understanding.context import merge_context
 
 load_dotenv()
 
@@ -312,7 +320,18 @@ def add_history(body: HistoryIn, user: dict = Depends(current_user)):
 
 CAMPUS_Q5 = re.compile(r"quan\s*5|q\.?\s*5|nguyen van cu|nvc", re.I)
 CAMPUS_LANG = re.compile(r"lang|linh trung|thu duc", re.I)
+def normalize_text(text: str) -> str:
+    text = text.lower().replace("đ", "d")
 
+    text = unicodedata.normalize("NFD", text)
+
+    text = "".join(
+        char
+        for char in text
+        if unicodedata.category(char) != "Mn"
+    )
+
+    return text
 
 def parse_money(text: str):
     m = re.search(
@@ -341,39 +360,93 @@ def parse_radius(text: str):
     return int(n * 1000) if m.group(2).lower() == "km" else int(n)
 
 
+
 class ChatBody(BaseModel):
     message: str
     campus: Optional[str] = None
     budget: Optional[int] = None
     radius_m: Optional[int] = None
+    cuisine: Optional[str] = None
+    keywords: list[str] = Field(default_factory=list)
 
 
 @app.post("/chat")
 def chat(body: ChatBody):
-    campus, budget, radius_m = body.campus, body.budget, body.radius_m
-    text = body.message
-    if CAMPUS_Q5.search(text):
-        campus = "q5"
-    if CAMPUS_LANG.search(text):
-        campus = "lang"
-    money = parse_money(text)
-    if money is not None:
-        budget = money
-    rad = parse_radius(text)
-    if rad is not None:
-        radius_m = rad
-    if not campus:
-        return {"ready": False, "campus": campus, "budget": budget, "radius_m": radius_m, "reply": "Co so nao? q5 hay lang"}
-    if not budget:
-        return {"ready": False, "campus": campus, "budget": budget, "radius_m": radius_m, "reply": "Ngan sach toi da?"}
-    if not radius_m:
-        return {"ready": False, "campus": campus, "budget": budget, "radius_m": radius_m, "reply": "Ban kinh di bo?"}
+
+    previous = {
+        "campus": body.campus,
+        "budget": body.budget,
+        "radius_m": body.radius_m,
+        "cuisine": body.cuisine,
+        "keywords": body.keywords
+    }
+
+    
+    try:
+        extracted = extract_intent(body.message, previous)
+        extracted = validate_intent(extracted)
+        intent = merge_context(previous, extracted)
+
+    except Exception as e:
+        print(
+            f"[INPUT UNDERSTANDING ERROR] "
+            f"{type(e).__name__}: {e}"
+        )
+
+        # Chuyển văn bản về dạng không dấu để Regex dễ nhận diện
+        normalized_message = normalize_text(body.message)
+
+        # Giữ lại ngữ cảnh trước đó
+        intent = previous.copy()
+
+        # Nhận diện địa điểm
+        if CAMPUS_Q5.search(normalized_message):
+            intent["campus"] = "q5"
+
+        if CAMPUS_LANG.search(normalized_message):
+            intent["campus"] = "lang"
+
+        # Nhận diện ngân sách
+        money = parse_money(normalized_message)
+
+        if money is not None:
+            intent["budget"] = money
+
+        # Nhận diện bán kính
+        radius = parse_radius(normalized_message)
+
+        if radius is not None:
+            intent["radius_m"] = radius
+
+    if not intent.get("campus"):
+        reply = "Bạn muốn tìm quán ở cơ sở Quận 5 hay Làng Đại học?"
+
+    elif not intent.get("budget"):
+        reply = "Ngân sách tối đa mỗi người của bạn là bao nhiêu?"
+
+    elif not intent.get("radius_m"):
+        reply = "Bạn muốn tìm quán trong khoảng cách bao xa?"
+
+    else:
+        reply = (
+            f"Đã hiểu yêu cầu! "
+            f"Cơ sở: {intent['campus']}, "
+            f"ngân sách: {intent['budget']:,}đ, "
+            f"khoảng cách: {intent['radius_m']}m."
+        )
+
+    ready = all([
+        intent.get("campus"),
+        intent.get("budget"),
+        intent.get("radius_m")
+    ])
+
     return {
-        "ready": True,
-        "campus": campus,
-        "budget": budget,
-        "radius_m": radius_m,
-        "reply": f"OK loc {campus}, {budget}d, {radius_m}m",
+        "ready": ready,
+        "campus": intent.get("campus"),
+        "budget": intent.get("budget"),
+        "radius_m": intent.get("radius_m"),
+        "reply": reply
     }
 
 
