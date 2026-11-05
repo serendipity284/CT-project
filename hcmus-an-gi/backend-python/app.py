@@ -10,18 +10,25 @@ import math
 import os
 import re
 import uuid
+import json
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from pathlib import Path
 
 import mysql.connector
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
 
+from menu_scan import scan_menu_images
+from starlette.concurrency import run_in_threadpool
 from rate_limit import (
     check_contribute_allowed,
     queue_enter,
@@ -56,6 +63,254 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------- dinh vi dia chi
+GEO_UA = "hcmus-an-gi/1.0 (student project)"
+
+
+def _nominatim(q: str):
+    url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+        {
+            "format": "jsonv2",
+            "limit": 1,
+            "countrycodes": "vn",
+            "q": q,
+            "viewbox": "106.3,11.2,107.1,10.3",
+            "bounded": 0,
+        }
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": GEO_UA, "Accept-Language": "vi"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    if data:
+        return float(data[0]["lat"]), float(data[0]["lon"])
+    return None
+
+
+def geocode_address(address: str):
+    """Dia chi -> (lat, lng, approx). Thu day du truoc, rut gon dan neu khong tim thay.
+    approx=True nghia la phai bo bot chi tiet (vd so nha/hem) nen vi tri chi gan dung.
+    Tra ve None neu khong tim duoc; raise HTTPException 503 neu khong goi duoc dich vu."""
+    base = " ".join(address.split())
+    low = base.lower()
+    has_city = any(k in low for k in ("hồ chí minh", "ho chi minh", "hcm", "tphcm", "sài gòn", "sai gon"))
+    suffix = "" if has_city else ", Thành phố Hồ Chí Minh"
+
+    cleaned = re.sub(r"\b(\d+)[A-Za-z]?(?:\s*[/\\]\s*\d+[A-Za-z]?)+", r"\1", base)
+    parts = [x.strip() for x in cleaned.split(",") if x.strip()]
+    tries: list[tuple[str, bool]] = [(base + suffix, False)]
+    if cleaned != base:
+        tries.append((cleaned + suffix, True))
+    for i in (1, 2):
+        if len(parts) > i:
+            tries.append((", ".join(parts[i:]) + suffix, True))
+
+    seen, uniq = set(), []
+    for q, approx in tries:
+        if q not in seen:
+            seen.add(q)
+            uniq.append((q, approx))
+
+    net_errors = 0
+    for i, (q, approx) in enumerate(uniq[:5]):
+        if i:
+            time.sleep(1.1)  # Nominatim: toi da 1 request/giay
+        try:
+            got = _nominatim(q)
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            net_errors += 1
+            continue
+        if got:
+            return got[0], got[1], approx
+    if net_errors == len(uniq[:5]):
+        raise HTTPException(503, "Khong goi duoc dich vu dinh vi dia chi (Nominatim). Kiem tra mang.")
+    return None
+
+
+_GOOGLE_HOST = re.compile(r"(^|\.)google\.[a-z.]+$")
+_SHORT_HOSTS = ("maps.app.goo.gl", "goo.gl")
+_COORD_PATTERNS = [
+    r"!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)",  # ghim cua dia diem (chinh xac nhat)
+    r"@(-?\d+\.\d+),(-?\d+\.\d+)",
+    r"[?&](?:q|ll|query|destination|center)=(-?\d+\.\d+),\s*(-?\d+\.\d+)",
+]
+
+
+def _is_google_host(host: Optional[str]) -> bool:
+    h = (host or "").lower()
+    return h in _SHORT_HOSTS or bool(_GOOGLE_HOST.search(h))
+
+
+def _parse_coords(url: str):
+    text = urllib.parse.unquote(url)
+    for pat in _COORD_PATTERNS:
+        m = re.search(pat, text)
+        if m:
+            lat, lng = float(m.group(1)), float(m.group(2))
+            if 8 <= lat <= 24 and 102 <= lng <= 110:  # trong khoang Viet Nam
+                return lat, lng
+    return None
+
+
+def coords_from_maps_url(url: str):
+    """Link Google Maps (day du hoac rut gon maps.app.goo.gl) -> (lat, lng) hoac None."""
+    url = url.strip()
+    u = urllib.parse.urlparse(url)
+    if u.scheme not in ("http", "https") or not _is_google_host(u.hostname):
+        return None
+    got = _parse_coords(url)
+    if got:
+        return got
+    if (u.hostname or "").lower() in _SHORT_HOSTS:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 hcmus-an-gi"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                final = r.geturl()
+            if _is_google_host(urllib.parse.urlparse(final).hostname):
+                return _parse_coords(final)
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            return None
+    return None
+
+
+def resolve_location(address: str, lat, lng, maps_url: Optional[str] = None):
+    """Tra ve (lat, lng, approx, source). Uu tien: toa do client > link Google Maps > dia chi."""
+    if lat is not None and lng is not None:
+        return lat, lng, False, "client"
+    if maps_url and maps_url.strip():
+        got = coords_from_maps_url(maps_url)
+        if not got:
+            raise HTTPException(
+                422,
+                "Khong doc duoc toa do tu link Google Maps. Hay dan link day du cua quan "
+                "(Chia se > Sao chep lien ket) hoac de trong de dinh vi theo dia chi.",
+            )
+        return got[0], got[1], False, "maps_link"
+    got = geocode_address(address)
+    if not got:
+        raise HTTPException(
+            422,
+            "Khong dinh vi duoc dia chi nay. Hay nhap day du hon (so nha, ten duong, phuong, quan) "
+            "hoac dan link Google Maps cua quan.",
+        )
+    return got[0], got[1], got[2], "address"
+
+
+def _col_type(cur, table: str, col: str):
+    cur.execute(
+        "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s",
+        (MYSQL["database"], table, col),
+    )
+    r = cur.fetchone()
+    if not r:
+        return None
+    v = r["DATA_TYPE"] if isinstance(r, dict) else r[0]
+    if isinstance(v, (bytes, bytearray)):
+        v = v.decode()
+    return str(v).lower()
+
+
+def _ensure_menu_tables(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS place_dishes (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          place_id INT NOT NULL,
+          name VARCHAR(180) NOT NULL,
+          category VARCHAR(120) NULL,
+          price BIGINT NULL,
+          note VARCHAR(255) NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_dishes_place (place_id)
+        )
+        """
+    )
+    if _col_type(cur, "place_dishes", "category") is None:
+        cur.execute("ALTER TABLE place_dishes ADD COLUMN category VARCHAR(120) NULL AFTER name")
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS place_menu_meta (
+          place_id INT PRIMARY KEY,
+          phone VARCHAR(60) NULL,
+          hours VARCHAR(255) NULL,
+          notes TEXT NULL,
+          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def derive_prices(pmin, pmax, dishes):
+    """Bo trong gia -> lay min/max tu gia cac mon AI doc duoc (khong co thi 0 = chua ro)."""
+    prices = [d.price for d in dishes if d.price is not None and d.price > 0]
+    lo = pmin if pmin is not None else (min(prices) if prices else 0)
+    hi = pmax if pmax is not None else (max(prices) if prices else lo)
+    return lo, max(hi, lo)
+
+
+def fetch_menu(cur, place_ids):
+    """(dishes_by_place, meta_by_place) cho cac quan; bang chua co thi tra rong."""
+    dishes: dict[int, list] = {}
+    meta: dict[int, dict] = {}
+    if not place_ids:
+        return dishes, meta
+    fmt = ",".join(["%s"] * len(place_ids))
+    try:
+        cur.execute(
+            f"SELECT id, place_id, name, category, price, note FROM place_dishes "
+            f"WHERE place_id IN ({fmt}) ORDER BY id",
+            list(place_ids),
+        )
+        for d in cur.fetchall():
+            dishes.setdefault(d["place_id"], []).append(
+                {
+                    "id": d["id"],
+                    "name": d["name"],
+                    "category": d["category"],
+                    "price": d["price"],
+                    "note": d["note"],
+                }
+            )
+    except Exception:
+        pass
+    try:
+        cur.execute(
+            f"SELECT place_id, phone, hours, notes FROM place_menu_meta WHERE place_id IN ({fmt})",
+            list(place_ids),
+        )
+        for m in cur.fetchall():
+            meta[m["place_id"]] = {"phone": m["phone"], "hours": m["hours"], "notes": m["notes"]}
+    except Exception:
+        pass
+    return dishes, meta
+
+
+@app.on_event("startup")
+def ensure_schema():
+    """Go gioi han: dia chi -> TEXT, gia -> BIGINT (chi chay ALTER khi cot dang la kieu nho)."""
+    try:
+        conn = mysql.connector.connect(**MYSQL)
+    except Exception:
+        return
+    cur = conn.cursor()
+    try:
+        _ensure_menu_tables(cur)
+        if _col_type(cur, "places", "address") in ("varchar", "char"):
+            cur.execute("ALTER TABLE places MODIFY address TEXT NOT NULL")
+        for c in ("price_min", "price_max"):
+            if _col_type(cur, "places", c) in ("int", "mediumint", "smallint", "tinyint"):
+                cur.execute(f"ALTER TABLE places MODIFY {c} BIGINT NOT NULL")
+        if _col_type(cur, "place_dishes", "price") in ("int", "mediumint", "smallint", "tinyint"):
+            cur.execute("ALTER TABLE place_dishes MODIFY price BIGINT NULL")
+        conn.commit()
+    except Exception as e:  # khong chan server khoi dong
+        print("ensure_schema:", e)
+    finally:
+        cur.close()
+        conn.close()
+
 
 CAMPUSES = {
     "q5": {"lat": 10.762622, "lng": 106.68236, "short": "Quan 5"},
@@ -463,12 +718,13 @@ def chat(body: ChatBody):
 class ContributeIn(BaseModel):
     name: str = Field(min_length=2, max_length=180)
     campus: str
-    lat: float
-    lng: float
-    price_min: int = Field(ge=0)
-    price_max: int = Field(ge=0)
+    lat: Optional[float] = None  # bo trong -> server tu dinh vi tu dia chi
+    lng: Optional[float] = None
+    maps_url: Optional[str] = Field(default=None, max_length=2000)  # link Google Maps (tuy chon)
+    price_min: Optional[int] = Field(default=None, ge=0)  # bo trong -> AI/server tu tinh
+    price_max: Optional[int] = Field(default=None, ge=0)
     cuisine: str = Field(min_length=1, max_length=80)
-    address: str = Field(min_length=2, max_length=255)
+    address: str = Field(min_length=2)
     hours: str = Field(default="", max_length=255)
     note: Optional[str] = None
 
@@ -482,7 +738,11 @@ def contribute_place(
     """Dong gop quan + rate limit + chong trung."""
     if body.campus not in CAMPUSES:
         raise HTTPException(400, "campus phai la q5 hoac lang")
-    if body.price_max < body.price_min:
+    if (
+        body.price_min is not None
+        and body.price_max is not None
+        and body.price_max < body.price_min
+    ):
         raise HTTPException(400, "price_max phai >= price_min")
     name = body.name.strip()
 
@@ -498,6 +758,8 @@ def contribute_place(
     try:
         if depth > 50:
             raise HTTPException(503, "He thong dang tai cao. Thu lai sau.")
+        lat, lng, approx, source = resolve_location(body.address, body.lat, body.lng, body.maps_url)
+        price_min, price_max = derive_prices(body.price_min, body.price_max, [])
 
         conn = get_conn()
         cur = conn.cursor(dictionary=True)
@@ -512,7 +774,7 @@ def contribute_place(
             note = (body.note or "").strip()
             address = body.address.strip()
             if note:
-                address = f"{address} | Ghi chu: {note[:120]}"
+                address = f"{address} | {note}"
 
             # schema co the co/khong co cot source
             try:
@@ -523,9 +785,9 @@ def contribute_place(
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'user')
                     """,
                     (
-                        name, body.campus, body.lat, body.lng,
-                        body.price_min, body.price_max, body.cuisine.strip(),
-                        address[:255], (body.hours or "Chua ro")[:255],
+                        name, body.campus, lat, lng,
+                        price_min, price_max, body.cuisine.strip(),
+                        address, (body.hours or "Chua ro")[:255],
                     ),
                 )
             except Exception:
@@ -536,20 +798,290 @@ def contribute_place(
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        name, body.campus, body.lat, body.lng,
-                        body.price_min, body.price_max, body.cuisine.strip(),
-                        address[:255], (body.hours or "Chua ro")[:255],
+                        name, body.campus, lat, lng,
+                        price_min, price_max, body.cuisine.strip(),
+                        address, (body.hours or "Chua ro")[:255],
                     ),
                 )
             conn.commit()
             new_id = cur.lastrowid
             record_contribute(user["id"], ip)
-            return {"ok": True, "id": new_id, "rate_limit": queue_stats()}
+            return {
+                "ok": True,
+                "id": new_id,
+                "lat": lat,
+                "lng": lng,
+                "approx_location": approx,
+                "location_source": source,
+                "rate_limit": queue_stats(),
+            }
         finally:
             cur.close()
             conn.close()
     finally:
         queue_leave()
+
+
+
+
+@app.post("/menu/scan")
+async def menu_scan(
+    request: Request,
+    files: list[UploadFile] = File(default=[]),
+    file: Optional[UploadFile] = File(default=None),
+    user: dict = Depends(current_user),
+):
+    """Nhan 1..10 anh (cac trang cua cung 1 menu), Gemini Vision doc -> mon + gia + thong tin quan."""
+    ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if not ip and request.client:
+        ip = request.client.host
+    check_contribute_allowed(user["id"], ip or "unknown")
+
+    uploads = list(files) + ([file] if file else [])
+    if not uploads:
+        raise HTTPException(400, "Chua co anh nao")
+    if len(uploads) > 10:
+        raise HTTPException(400, "Toi da 10 anh moi lan")
+
+    images: list[tuple[bytes, str]] = []
+    total = 0
+    for up in uploads:
+        mime = (up.content_type or "image/jpeg").lower()
+        if not mime.startswith("image/"):
+            raise HTTPException(400, "Chi nhan file anh (jpeg/png/webp)")
+        raw = await up.read()
+        if not raw:
+            raise HTTPException(400, "Co file anh rong")
+        if len(raw) > 8 * 1024 * 1024:
+            raise HTTPException(400, "Moi anh toi da 8MB")
+        total += len(raw)
+        if total > 25 * 1024 * 1024:
+            raise HTTPException(400, "Tong dung luong anh toi da 25MB")
+        images.append((raw, mime))
+
+    try:
+        # chay trong thread de khong chan cac request khac (Gemini mat vai chuc giay)
+        result = await run_in_threadpool(scan_menu_images, images)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Loi Gemini OCR: {e}")
+
+    return {"ok": True, "images": len(images), **result}
+
+
+class DishIn(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    price: Optional[int] = Field(default=None, ge=0)
+    category: Optional[str] = Field(default=None, max_length=120)
+    note: Optional[str] = None
+
+
+class MenuMetaIn(BaseModel):
+    phone: Optional[str] = Field(default=None, max_length=60)
+    hours: Optional[str] = Field(default=None, max_length=255)
+    notes: Optional[str] = None
+
+
+class ContributeWithMenuIn(BaseModel):
+    name: str = Field(min_length=2, max_length=180)
+    campus: str
+    lat: Optional[float] = None  # bo trong -> server tu dinh vi tu dia chi
+    lng: Optional[float] = None
+    maps_url: Optional[str] = Field(default=None, max_length=2000)  # link Google Maps (tuy chon)
+    price_min: Optional[int] = Field(default=None, ge=0)  # bo trong -> AI/server tu tinh
+    price_max: Optional[int] = Field(default=None, ge=0)
+    cuisine: str = Field(min_length=1, max_length=80)
+    address: str = Field(min_length=2)
+    hours: str = Field(default="", max_length=255)
+    note: Optional[str] = None
+    dishes: list[DishIn] = []
+    menu_meta: Optional[MenuMetaIn] = None
+
+
+@app.post("/places/contribute-with-menu")
+def contribute_with_menu(
+    body: ContributeWithMenuIn,
+    request: Request,
+    user: dict = Depends(current_user),
+):
+    """Tao quan + luu danh sach mon (sau khi user xac nhan ket qua OCR)."""
+    if body.campus not in CAMPUSES:
+        raise HTTPException(400, "campus phai la q5 hoac lang")
+    if (
+        body.price_min is not None
+        and body.price_max is not None
+        and body.price_max < body.price_min
+    ):
+        raise HTTPException(400, "price_max phai >= price_min")
+
+    ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if not ip and request.client:
+        ip = request.client.host
+    ok, msg = check_contribute_allowed(user["id"], ip or "unknown")
+    if not ok:
+        raise HTTPException(429, msg)
+
+    depth = queue_enter()
+    try:
+        if depth > 50:
+            raise HTTPException(503, "He thong dang tai cao.")
+        lat, lng, approx, source = resolve_location(body.address, body.lat, body.lng, body.maps_url)
+        price_min, price_max = derive_prices(body.price_min, body.price_max, body.dishes)
+        name = body.name.strip()
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT id FROM places WHERE campus = %s AND LOWER(name) = LOWER(%s) LIMIT 1",
+                (body.campus, name),
+            )
+            if cur.fetchone():
+                raise HTTPException(409, "Quan da ton tai (trung ten + co so).")
+
+            note = (body.note or "").strip()
+            address = body.address.strip()
+            if note:
+                address = f"{address} | {note}"
+
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO places
+                    (name, campus, lat, lng, price_min, price_max, cuisine, address, hours, source)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'user')
+                    """,
+                    (
+                        name, body.campus, lat, lng,
+                        price_min, price_max, body.cuisine.strip(),
+                        address, (body.hours or "Chua ro")[:255],
+                    ),
+                )
+            except Exception:
+                cur.execute(
+                    """
+                    INSERT INTO places
+                    (name, campus, lat, lng, price_min, price_max, cuisine, address, hours)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        name, body.campus, lat, lng,
+                        price_min, price_max, body.cuisine.strip(),
+                        address, (body.hours or "Chua ro")[:255],
+                    ),
+                )
+            place_id = cur.lastrowid
+
+            _ensure_menu_tables(cur)
+            for d in body.dishes[:150]:
+                cur.execute(
+                    "INSERT INTO place_dishes (place_id, name, category, price, note) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (
+                        place_id,
+                        d.name.strip()[:180],
+                        (d.category or "").strip()[:120] or None,
+                        d.price,
+                        (d.note or "").strip()[:255] or None,
+                    ),
+                )
+            mm = body.menu_meta
+            if mm and (mm.phone or mm.hours or mm.notes):
+                cur.execute(
+                    "INSERT INTO place_menu_meta (place_id, phone, hours, notes) VALUES (%s,%s,%s,%s)",
+                    (
+                        place_id,
+                        (mm.phone or "").strip() or None,
+                        (mm.hours or "").strip() or None,
+                        (mm.notes or "").strip() or None,
+                    ),
+                )
+            conn.commit()
+            record_contribute(user["id"], ip or "unknown")
+            return {
+                "ok": True,
+                "id": place_id,
+                "lat": lat,
+                "lng": lng,
+                "approx_location": approx,
+                "location_source": source,
+                "price_min": price_min,
+                "price_max": price_max,
+                "dishes_saved": min(len(body.dishes), 150),
+            }
+        finally:
+            cur.close()
+            conn.close()
+    finally:
+        queue_leave()
+
+
+@app.get("/places/saved")
+def list_saved_places(user: dict = Depends(current_user)):
+    """Quan user da luu: day du thong tin + menu, khong loc theo ban kinh."""
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT p.id, p.name, p.campus, p.lat, p.lng, p.price_min, p.price_max, "
+            "p.cuisine, p.address, p.hours "
+            "FROM saves s JOIN places p ON p.id = s.place_id "
+            "WHERE s.user_id = %s ORDER BY p.id DESC",
+            (user["id"],),
+        )
+        rows = cur.fetchall()
+        dishes, meta = fetch_menu(cur, [r["id"] for r in rows])
+        return [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "campus": r["campus"],
+                "lat": float(r["lat"]),
+                "lng": float(r["lng"]),
+                "price_min": int(r["price_min"]),
+                "price_max": int(r["price_max"]),
+                "cuisine": r["cuisine"],
+                "address": r["address"],
+                "hours": r["hours"],
+                "dishes": dishes.get(r["id"], []),
+                "menu_meta": meta.get(r["id"]),
+            }
+            for r in rows
+        ]
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/places/{place_id}/info")
+def place_info(place_id: int):
+    """Menu (mon, gia, nhom) + thong tin AI doc duoc tu anh menu cua 1 quan."""
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        dishes, meta = fetch_menu(cur, [place_id])
+        return {"dishes": dishes.get(place_id, []), "menu_meta": meta.get(place_id)}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/places/{place_id}/dishes")
+def list_dishes(place_id: int):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        try:
+            cur.execute(
+                "SELECT id, name, category, price, note FROM place_dishes WHERE place_id = %s ORDER BY id",
+                (place_id,),
+            )
+            return cur.fetchall()
+        except Exception:
+            return []
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.get("/health")
