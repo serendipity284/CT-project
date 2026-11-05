@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel, EmailStr, Field
 
 from menu_scan import scan_menu_images
@@ -53,7 +53,18 @@ MYSQL = {
     "database": os.getenv("MYSQL_DATABASE", "hcmus_an_gi"),
 }
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
-pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def hash_password(password: str) -> str:
+    pwd_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        pwd_bytes = plain_password.encode("utf-8")[:72]
+        return bcrypt.checkpw(pwd_bytes, hashed_password.encode("utf-8"))
+    except Exception:
+        return False
 
 app = FastAPI(title="HCMUS An Gi API")
 app.add_middleware(
@@ -380,7 +391,7 @@ def signup(body: SignUpIn):
         uid = str(uuid.uuid4())
         cur.execute(
             "INSERT INTO users (id, email, name, password_hash) VALUES (%s, %s, %s, %s)",
-            (uid, body.email.lower(), body.name.strip(), pwd.hash(body.password)),
+            (uid, body.email.lower(), body.name.strip(), hash_password(body.password)),
         )
         conn.commit()
         token = make_token(uid, body.email.lower())
@@ -400,7 +411,7 @@ def login(body: LoginIn):
     try:
         cur.execute("SELECT * FROM users WHERE email = %s", (body.email.lower(),))
         row = cur.fetchone()
-        if not row or not pwd.verify(body.password, row["password_hash"]):
+        if not row or not verify_password(body.password, row["password_hash"]):
             raise HTTPException(401, "Email hoac mat khau sai")
         token = make_token(row["id"], row["email"])
         return {

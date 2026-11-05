@@ -26,7 +26,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     let msg = res.statusText;
     try {
       const j = await res.json();
-      msg = j.detail ?? j.message ?? JSON.stringify(j);
+      msg = typeof j.detail === "string" ? j.detail : Array.isArray(j.detail) && j.detail[0]?.msg ? j.detail[0].msg : (j.message ?? JSON.stringify(j));
     } catch {
       /* ignore */
     }
