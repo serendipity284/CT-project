@@ -29,7 +29,18 @@ import {
   toggleSaveApi,
   contributePlace,
   postChat,
+  scanMenuImages,
+  contributeWithMenu,
+  fetchPlaceInfo,
+  fetchSavedPlaces,
+  type ApiDish,
+  type ApiMenuMeta,
+  type ApiPlaceInfo,
+  type ApiSavedPlace,
+  type ScannedDish,
 } from "./lib/api";
+import { mapsPinUrl, mapsSearchUrl, splitAddress } from "./lib/maps";
+import { shrinkImage } from "./lib/image";
 import {
   addHistory,
   addReview,
@@ -48,6 +59,10 @@ import {
   type User,
 } from "./lib/storage";
 import { CampusMap } from "./components/CampusMap";
+
+type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
+type MenuFile = { file: File; url: string };
+type ScanMeta = { phone: string; hours: string; notes: string };
 
 export default function App() {
   const useApi = apiEnabled();
@@ -86,12 +101,20 @@ export default function App() {
   const [contribCuisine, setContribCuisine] = useState("Cơm");
   const [contribAddress, setContribAddress] = useState("");
   const [contribHours, setContribHours] = useState("7:00–20:00");
-  const [contribMin, setContribMin] = useState(25000);
-  const [contribMax, setContribMax] = useState(45000);
+  const [contribMin, setContribMin] = useState(""); // bỏ trống → AI tự tính
+  const [contribMax, setContribMax] = useState("");
   const [contribNote, setContribNote] = useState("");
+  const [contribMapsUrl, setContribMapsUrl] = useState("");
   const [contribOffsetM, setContribOffsetM] = useState(200);
   const [contribMsg, setContribMsg] = useState("");
   const [contribBusy, setContribBusy] = useState(false);
+  const [scannedDishes, setScannedDishes] = useState<ScannedDish[]>([]);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [menuFiles, setMenuFiles] = useState<MenuFile[]>([]);
+  const [scanMeta, setScanMeta] = useState<ScanMeta | null>(null);
+  const [activeInfo, setActiveInfo] = useState<ApiPlaceInfo>({ dishes: [], menu_meta: null });
+  const [savedApi, setSavedApi] = useState<ApiSavedPlace[]>([]);
+  const [viewSavedId, setViewSavedId] = useState<number | null>(null);
 
   const loadFromApi = useCallback(async () => {
     if (!useApi) return;
@@ -240,6 +263,36 @@ export default function App() {
     };
   }, [active?.id, campus, active?.lat, active?.lng]);
 
+  useEffect(() => {
+    const empty: ApiPlaceInfo = { dishes: [], menu_meta: null };
+    if (!useApi || !active) {
+      setActiveInfo(empty);
+      return;
+    }
+    let cancelled = false;
+    fetchPlaceInfo(active.id)
+      .then((d) => !cancelled && setActiveInfo(d))
+      .catch(() => !cancelled && setActiveInfo(empty));
+    return () => {
+      cancelled = true;
+    };
+  }, [useApi, active?.id]);
+
+  useEffect(() => {
+    if (!useApi || !user) {
+      setSavedApi([]);
+      return;
+    }
+    fetchSavedPlaces()
+      .then(setSavedApi)
+      .catch(() => setSavedApi([]));
+  }, [useApi, user, saved]);
+
+  const savedPlaces: SavedPlace[] = useApi
+    ? savedApi.map((p) => ({ ...p, campus: p.campus as CampusId }))
+    : places.filter((p) => saved.includes(p.id)).map((p) => ({ ...p, dishes: [] }));
+  const viewSaved = savedPlaces.find((p) => p.id === viewSavedId) ?? null;
+
   const activeReviews = reviews.filter((r) => r.placeId === active?.id);
   const avg =
     activeReviews.length > 0
@@ -370,6 +423,76 @@ export default function App() {
     };
   }
 
+  const locMsg = (r: { approx_location: boolean; location_source: string }) =>
+    r.location_source === "maps_link"
+      ? "Đã lấy vị trí chính xác từ link Google Maps. Quán chỉ hiện trong danh sách nếu nằm trong bán kính đang chọn."
+      : r.approx_location
+        ? "Vị trí chỉ định vị gần đúng. Hãy kiểm tra bằng link Google Maps hoặc dán link ghim của quán rồi gửi lại."
+        : "Đã định vị theo địa chỉ. Quán chỉ hiện trong danh sách nếu nằm trong bán kính đang chọn.";
+
+  async function toggleSavedPlace(placeId: number) {
+    if (!user) return;
+    if (useApi) {
+      try {
+        await toggleSaveApi(placeId);
+        setSaved(await apiFetchSaves());
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : "Lỗi lưu quán");
+      }
+    } else {
+      setSaved(toggleSave(user.id, placeId));
+    }
+  }
+
+  function clearMenuFiles() {
+    setMenuFiles((prev) => {
+      prev.forEach((m) => URL.revokeObjectURL(m.url));
+      return [];
+    });
+  }
+
+  async function addMenuFiles(list: File[]) {
+    const room = Math.max(0, 10 - menuFiles.length);
+    const picked = list.filter((f) => f.type.startsWith("image/")).slice(0, room);
+    if (list.length > picked.length) setContribMsg("Tối đa 10 ảnh cho mỗi menu.");
+    const shrunk = await Promise.all(picked.map((f) => shrinkImage(f)));
+    setMenuFiles((prev) =>
+      [...prev, ...shrunk.map((file) => ({ file, url: URL.createObjectURL(file) }))].slice(0, 10),
+    );
+  }
+
+  function removeMenuFile(i: number) {
+    setMenuFiles((prev) => {
+      if (prev[i]) URL.revokeObjectURL(prev[i].url);
+      return prev.filter((_, j) => j !== i);
+    });
+  }
+
+  async function runScan() {
+    if (menuFiles.length === 0) return;
+    setScanBusy(true);
+    setContribMsg("");
+    try {
+      const res = await scanMenuImages(menuFiles.map((m) => m.file));
+      const dishes = res.dishes || [];
+      setScannedDishes(dishes);
+      if (res.restaurant_hint && !contribName.trim()) setContribName(String(res.restaurant_hint));
+      if (res.address_hint && !contribAddress.trim()) setContribAddress(String(res.address_hint));
+      setScanMeta({
+        phone: res.phone ?? "",
+        hours: res.hours ?? "",
+        notes: (res.notes ?? []).join("\n"),
+      });
+      setContribMsg(
+        `AI đọc được ${dishes.length} món từ ${res.images} ảnh. Kiểm tra rồi bấm Gửi (khoảng giá sẽ tự tính).`,
+      );
+    } catch (err) {
+      setContribMsg(err instanceof Error ? err.message : "Scan menu thất bại");
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
   async function submitContribution(e: React.FormEvent) {
     e.preventDefault();
     if (!user) {
@@ -377,7 +500,9 @@ export default function App() {
       setPage("login");
       return;
     }
-    if (contribMax < contribMin) {
+    const pMin = contribMin.trim() === "" ? undefined : Number(contribMin);
+    const pMax = contribMax.trim() === "" ? undefined : Number(contribMax);
+    if (pMin !== undefined && pMax !== undefined && pMax < pMin) {
       setContribMsg("Giá max phải ≥ giá min.");
       return;
     }
@@ -386,19 +511,45 @@ export default function App() {
     const pos = defaultLatLng(campus, contribOffsetM);
     try {
       if (useApi) {
-        const res = await contributePlace({
+        // Không gửi lat/lng: server tự định vị theo địa chỉ (OpenStreetMap)
+        const payload = {
           name: contribName.trim(),
           campus,
-          lat: pos.lat,
-          lng: pos.lng,
-          price_min: contribMin,
-          price_max: contribMax,
+          maps_url: contribMapsUrl.trim() || undefined,
+          price_min: pMin,
+          price_max: pMax,
           cuisine: contribCuisine.trim(),
           address: contribAddress.trim(),
           hours: contribHours.trim(),
           note: contribNote.trim() || undefined,
-        });
-        setContribMsg(`Đã lưu MySQL (id=${res.id}). Bấm tải lại list nếu cần.`);
+        };
+        if (scannedDishes.length > 0) {
+          const res = await contributeWithMenu({
+            ...payload,
+            dishes: scannedDishes.map((d) => ({
+              name: d.name,
+              price: d.price,
+              category: d.category ?? undefined,
+              note: d.note ?? undefined,
+            })),
+            menu_meta: scanMeta
+              ? {
+                  phone: scanMeta.phone.trim() || undefined,
+                  hours: scanMeta.hours.trim() || undefined,
+                  notes: scanMeta.notes.trim() || undefined,
+                }
+              : undefined,
+          });
+          setContribMsg(
+            `Đã lưu quán #${res.id} + ${res.dishes_saved} món từ menu vào MySQL. ${locMsg(res)}`,
+          );
+        } else {
+          const res = await contributePlace(payload);
+          setContribMsg(`Đã lưu MySQL (id=${res.id}). ${locMsg(res)}`);
+        }
+        setScannedDishes([]);
+        clearMenuFiles();
+        setScanMeta(null);
         await loadFromApi();
       } else {
         const list = addContribution({
@@ -406,8 +557,8 @@ export default function App() {
           campus,
           lat: pos.lat,
           lng: pos.lng,
-          price_min: contribMin,
-          price_max: contribMax,
+          price_min: pMin ?? 0,
+          price_max: pMax ?? pMin ?? 0,
           cuisine: contribCuisine.trim(),
           address: contribAddress.trim(),
           hours: contribHours.trim(),
@@ -434,7 +585,10 @@ export default function App() {
       }
       setContribName("");
       setContribNote("");
-      setTab("list");
+      setContribMapsUrl("");
+      setContribMin("");
+      setContribMax("");
+      if (!useApi) setTab("list");
     } catch (err) {
       setContribMsg(err instanceof Error ? err.message : "Lỗi gửi đóng góp");
     } finally {
@@ -609,7 +763,7 @@ export default function App() {
                 >
                   <strong>{p.name}</strong>
                   <span>
-                    {p.cuisine} · {vnd(p.price_min)}–{vnd(p.price_max)}
+                    {p.cuisine} · {priceText(p)}
                   </span>
                   <span>
                     {p.meters}m · {walkMinutes(p.meters)} phút · {p.hours}
@@ -676,10 +830,19 @@ export default function App() {
                     onChange={(e) => setContribCuisine(e.target.value)} />
                 </label>
                 <label>
-                  Địa chỉ / mô tả
-                  <input className="field" required minLength={4} value={contribAddress}
-                    onChange={(e) => setContribAddress(e.target.value)} placeholder="Gần cổng trường…" />
+                  Địa chỉ đầy đủ (dùng để định vị trên Google Maps)
+                  <textarea className="field" required minLength={4} rows={2} value={contribAddress}
+                    onChange={(e) => setContribAddress(e.target.value)}
+                    placeholder="VD: 227 Nguyễn Văn Cừ, Phường 4, Quận 5" />
                 </label>
+                {useApi && (
+                  <label>
+                    Link Google Maps (tùy chọn, để vị trí chính xác hơn)
+                    <input className="field" type="url" value={contribMapsUrl}
+                      onChange={(e) => setContribMapsUrl(e.target.value)}
+                      placeholder="Mở quán trên Google Maps → Chia sẻ → Sao chép liên kết" />
+                  </label>
+                )}
                 <label>
                   Giờ mở
                   <input className="field" value={contribHours}
@@ -687,30 +850,161 @@ export default function App() {
                 </label>
                 <div className="row wrap">
                   <label>
-                    Giá từ (đ)
-                    <input className="field tiny" type="number" min={5000} step={1000}
-                      value={contribMin} onChange={(e) => setContribMin(Number(e.target.value) || 0)} />
+                    Giá từ (đ) <span className="muted">tùy chọn</span>
+                    <input className="field tiny" type="number" min={0} step={1}
+                      placeholder="AI tự tính"
+                      value={contribMin} onChange={(e) => setContribMin(e.target.value)} />
                   </label>
                   <label>
-                    Giá đến (đ)
-                    <input className="field tiny" type="number" min={5000} step={1000}
-                      value={contribMax} onChange={(e) => setContribMax(Number(e.target.value) || 0)} />
+                    Giá đến (đ) <span className="muted">tùy chọn</span>
+                    <input className="field tiny" type="number" min={0} step={1}
+                      placeholder="AI tự tính"
+                      value={contribMax} onChange={(e) => setContribMax(e.target.value)} />
                   </label>
                 </div>
-                <label>
-                  Cách cổng ~ (m)
-                  <input className="field" type="number" min={50} max={1500} step={50}
-                    value={contribOffsetM}
-                    onChange={(e) => setContribOffsetM(Number(e.target.value) || 200)} />
-                </label>
+                {!useApi && (
+                  <label>
+                    Cách cổng ~ (m)
+                    <input className="field" type="number" min={50} max={1500} step={50}
+                      value={contribOffsetM}
+                      onChange={(e) => setContribOffsetM(Number(e.target.value) || 200)} />
+                  </label>
+                )}
                 <label>
                   Ghi chú
                   <input className="field" value={contribNote}
                     onChange={(e) => setContribNote(e.target.value)} placeholder="Món đáng thử…" />
                 </label>
+
+                <div className="menu-scan-box">
+                  <strong>Ảnh menu (AI đọc món, giá, thông tin quán)</strong>
+                  <p className="muted">
+                    Menu nhiều trang? Chọn nhiều ảnh một lúc hoặc bấm chọn thêm nhiều lần (tối đa
+                    10 ảnh). Cần đăng nhập + API + <code>GEMINI_API_KEY</code>.
+                  </p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    disabled={!user || !useApi || scanBusy || menuFiles.length >= 10}
+                    onChange={(e) => {
+                      const list = Array.from(e.target.files ?? []);
+                      e.target.value = "";
+                      if (list.length) void addMenuFiles(list);
+                    }}
+                  />
+                  {menuFiles.length > 0 && (
+                    <div className="thumbs">
+                      {menuFiles.map((m, i) => (
+                        <div key={m.url} className="thumb">
+                          <img src={m.url} alt={`Trang ${i + 1}`} />
+                          <span>Trang {i + 1}</span>
+                          <button
+                            type="button"
+                            className="chip"
+                            disabled={scanBusy}
+                            onClick={() => removeMenuFile(i)}
+                          >
+                            Xóa
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {menuFiles.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={scanBusy || !user || !useApi}
+                      onClick={() => void runScan()}
+                    >
+                      {scanBusy ? "AI đang đọc menu…" : `AI đọc menu (${menuFiles.length} ảnh)`}
+                    </button>
+                  )}
+                  {scanBusy && (
+                    <p className="muted">Đang gửi ảnh cho AI, có thể mất vài chục giây…</p>
+                  )}
+                  {scanMeta && (
+                    <div className="stack">
+                      <p className="muted">Thông tin AI đọc được (có thể sửa):</p>
+                      <input className="field" placeholder="Số điện thoại" value={scanMeta.phone}
+                        onChange={(e) => setScanMeta({ ...scanMeta, phone: e.target.value })} />
+                      <input className="field" placeholder="Giờ mở ghi trên menu" value={scanMeta.hours}
+                        onChange={(e) => setScanMeta({ ...scanMeta, hours: e.target.value })} />
+                      <textarea className="field" rows={2} placeholder="Ghi chú của quán (freeship, phụ thu…)"
+                        value={scanMeta.notes}
+                        onChange={(e) => setScanMeta({ ...scanMeta, notes: e.target.value })} />
+                    </div>
+                  )}
+                  {scannedDishes.length > 0 && (
+                    <div className="dish-list">
+                      <p className="muted">
+                        Món đã nhận (có thể sửa tên, nhóm, giá). Khoảng giá của quán sẽ tự tính từ
+                        các món này.
+                      </p>
+                      {scannedDishes.map((d, i) => (
+                        <div key={i} className="dish-row">
+                          <input
+                            className="field grow"
+                            value={d.name}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setScannedDishes((prev) =>
+                                prev.map((x, j) => (j === i ? { ...x, name: v } : x)),
+                              );
+                            }}
+                          />
+                          <input
+                            className="field tiny"
+                            placeholder="Nhóm"
+                            value={d.category ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setScannedDishes((prev) =>
+                                prev.map((x, j) => (j === i ? { ...x, category: v || null } : x)),
+                              );
+                            }}
+                          />
+                          <input
+                            className="field tiny"
+                            type="number"
+                            min={0}
+                            placeholder="Giá"
+                            value={d.price ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value === "" ? null : Number(e.target.value);
+                              setScannedDishes((prev) =>
+                                prev.map((x, j) => (j === i ? { ...x, price: v } : x)),
+                              );
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="chip"
+                            onClick={() =>
+                              setScannedDishes((prev) => prev.filter((_, j) => j !== i))
+                            }
+                          >
+                            Xóa
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        className="chip"
+                        onClick={() =>
+                          setScannedDishes((prev) => [...prev, { name: "Món mới", price: null }])
+                        }
+                      >
+                        + Thêm món
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 {contribMsg && (
                   <p className={
-                    /lỗi|cần|nhanh|vượt|trùng|tải cao/i.test(contribMsg) ? "error" : "muted"
+                    /lỗi|loi|cần|nhanh|vượt|trùng|tải cao|phải|không|khong|thất bại/i.test(contribMsg) ? "error" : "muted"
                   }>{contribMsg}</p>
                 )}
                 <button className="btn-primary" type="submit" disabled={contribBusy || !user}>
@@ -742,6 +1036,36 @@ export default function App() {
                   >
                     {onlySaved ? "Đang xem quán đã lưu" : "Chỉ hiện quán đã lưu"}
                   </button>
+                  <h2 className="section">Quán đã lưu ({savedPlaces.length})</h2>
+                  {savedPlaces.length === 0 && (
+                    <p className="muted">Chưa lưu quán nào. Mở một quán và bấm biểu tượng dấu trang.</p>
+                  )}
+                  {viewSaved ? (
+                    <SavedPlaceDetail
+                      place={viewSaved}
+                      onBack={() => setViewSavedId(null)}
+                      onUnsave={async () => {
+                        if (!window.confirm(`Bỏ lưu "${viewSaved.name}"?`)) return;
+                        await toggleSavedPlace(viewSaved.id);
+                        setViewSavedId(null);
+                      }}
+                    />
+                  ) : (
+                    savedPlaces.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="card"
+                        onClick={() => setViewSavedId(p.id)}
+                      >
+                        <strong>{p.name}</strong>
+                        <span>
+                          {p.cuisine} · {priceText(p)}
+                        </span>
+                        <span>{splitAddress(p.address).address}</span>
+                      </button>
+                    ))
+                  )}
                   <h2 className="section">Lịch sử</h2>
                   {history.length === 0 && <p className="muted">Chưa có lịch sử.</p>}
                   {history.map((h) => (
@@ -776,7 +1100,7 @@ export default function App() {
             </div>
           )}
 
-          {active && tab !== "chat" && (
+          {active && tab === "list" && (
             <div className="detail">
               <div className="row between">
                 <h2 className="section">{active.name}</h2>
@@ -785,24 +1109,12 @@ export default function App() {
                     type="button"
                     className="icon-btn"
                     aria-label="Lưu quán"
-                    onClick={async () => {
-                      if (useApi) {
-                        try {
-                          await toggleSaveApi(active.id);
-                          setSaved(await apiFetchSaves());
-                        } catch (e) {
-                          setApiError(e instanceof Error ? e.message : "Lỗi lưu quán");
-                        }
-                      } else {
-                        setSaved(toggleSave(user.id, active.id));
-                      }
-                    }}
+                    onClick={() => void toggleSavedPlace(active.id)}
                   >
                     <Bookmark size={18} fill={saved.includes(active.id) ? "currentColor" : "none"} />
                   </button>
                 )}
               </div>
-              <p className="muted">{active.address}</p>
               <div className="route-box">
                 <strong>Chỉ đường trên bản đồ</strong>
                 {routeLoading && <p className="muted">Đang tính đường đi bộ…</p>}
@@ -820,8 +1132,15 @@ export default function App() {
                 rel="noreferrer"
                 href={`https://www.google.com/maps/dir/?api=1&origin=${CAMPUSES[campus].lat},${CAMPUSES[campus].lng}&destination=${active.lat},${active.lng}&travelmode=walking`}
               >
-                Mở Google Maps (tab mới)
+                Chỉ đường Google Maps (tab mới)
+              </a>{" "}
+              <a className="chip" target="_blank" rel="noreferrer" href={mapsSearchUrl(active.address)}>
+                Xem địa chỉ trên Google Maps
+              </a>{" "}
+              <a className="chip" target="_blank" rel="noreferrer" href={mapsPinUrl(active.lat, active.lng)}>
+                Xem theo vị trí đã định vị
               </a>
+              <PlaceInfoText place={active} info={activeInfo} />
               <p className="muted">
                 Đánh giá:{" "}
                 {activeReviews.length ? `${avg.toFixed(1)}/5 · ${activeReviews.length}` : "chưa có"}
@@ -1003,5 +1322,169 @@ function LoginPage({
         </form>
       </div>
     </main>
+  );
+}
+
+function priceText(p: { price_min: number; price_max: number }) {
+  if (!(p.price_max > 0)) return "Chưa rõ giá";
+  return p.price_min === p.price_max ? vnd(p.price_min) : `${vnd(p.price_min)}–${vnd(p.price_max)}`;
+}
+
+/** Gom món theo nhóm (giữ thứ tự xuất hiện). Món không nhóm → "Khác" nếu quán có nhóm khác. */
+function groupDishes(dishes: ApiDish[]): [string, ApiDish[]][] {
+  const hasCats = dishes.some((d) => d.category);
+  const map = new Map<string, ApiDish[]>();
+  for (const d of dishes) {
+    const k = d.category || (hasCats ? "Khác" : "");
+    map.set(k, [...(map.get(k) ?? []), d]);
+  }
+  return [...map.entries()];
+}
+
+function buildInfoText(place: Place, info: ApiPlaceInfo): string {
+  const { address, note } = splitAddress(place.address);
+  const m = info.menu_meta;
+  const lines = [
+    place.name,
+    `Loại món: ${place.cuisine}`,
+    `Khoảng giá: ${priceText(place)}`,
+    `Giờ mở: ${place.hours || "Chưa rõ"}`,
+    `Địa chỉ: ${address}`,
+  ];
+  if (note) lines.push(`Ghi chú: ${note}`);
+  if (m?.phone) lines.push(`SĐT: ${m.phone}`);
+  if (m?.hours && m.hours !== place.hours) lines.push(`Giờ ghi trên menu: ${m.hours}`);
+  if (m?.notes) lines.push(`Lưu ý của quán: ${m.notes.replace(/\n+/g, "; ")}`);
+  if (info.dishes.length) {
+    lines.push("", `MENU (${info.dishes.length} món)`);
+    for (const [cat, items] of groupDishes(info.dishes)) {
+      if (cat) lines.push(`# ${cat}`);
+      for (const d of items) {
+        lines.push(
+          `- ${d.name}${d.note ? ` (${d.note})` : ""}: ${d.price != null ? vnd(d.price) : "chưa rõ giá"}`,
+        );
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function MenuBlock({ dishes }: { dishes: ApiDish[] }) {
+  if (dishes.length === 0) return <p className="muted">Chưa có menu cho quán này.</p>;
+  return (
+    <div className="menu-text">
+      <strong>Menu ({dishes.length} món)</strong>
+      {groupDishes(dishes).map(([cat, items]) => (
+        <div key={cat || "_"} className="menu-group">
+          {cat && <em className="menu-cat">{cat}</em>}
+          <ul>
+            {items.map((d) => (
+              <li key={d.id}>
+                <span>
+                  {d.name}
+                  {d.note ? ` (${d.note})` : ""}
+                </span>
+                <span>{d.price != null ? vnd(d.price) : "—"}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Thông tin quán dạng text: loại món, giá, giờ, địa chỉ, SĐT, ghi chú, menu theo nhóm. */
+function PlaceInfoText({ place, info }: { place: Place; info: ApiPlaceInfo }) {
+  const { address, note } = splitAddress(place.address);
+  const m = info.menu_meta;
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="info-text">
+      <strong>Thông tin quán</strong>
+      <dl>
+        <dt>Loại món</dt>
+        <dd>{place.cuisine}</dd>
+        <dt>Khoảng giá</dt>
+        <dd>{priceText(place)}</dd>
+        <dt>Giờ mở</dt>
+        <dd>{place.hours || "Chưa rõ"}</dd>
+        {m?.hours && m.hours !== place.hours && (
+          <>
+            <dt>Giờ ghi trên menu</dt>
+            <dd>{m.hours}</dd>
+          </>
+        )}
+        <dt>Địa chỉ</dt>
+        <dd>{address}</dd>
+        {note && (
+          <>
+            <dt>Ghi chú</dt>
+            <dd>{note}</dd>
+          </>
+        )}
+        {m?.phone && (
+          <>
+            <dt>SĐT</dt>
+            <dd>
+              <a href={`tel:${m.phone.replace(/[^\d+]/g, "")}`}>{m.phone}</a>
+            </dd>
+          </>
+        )}
+        {m?.notes && (
+          <>
+            <dt>Lưu ý của quán</dt>
+            <dd style={{ whiteSpace: "pre-line" }}>{m.notes}</dd>
+          </>
+        )}
+      </dl>
+      <MenuBlock dishes={info.dishes} />
+      <button
+        type="button"
+        className="chip"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(buildInfoText(place, info));
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          } catch {
+            /* trình duyệt chặn clipboard */
+          }
+        }}
+      >
+        {copied ? "Đã sao chép" : "Sao chép thông tin (text)"}
+      </button>
+    </div>
+  );
+}
+
+function SavedPlaceDetail({
+  place,
+  onBack,
+  onUnsave,
+}: {
+  place: SavedPlace;
+  onBack: () => void;
+  onUnsave: () => void;
+}) {
+  return (
+    <div className="detail">
+      <button type="button" className="chip" onClick={onBack}>
+        ← Danh sách đã lưu
+      </button>
+      <h2 className="section">{place.name}</h2>
+      <div className="row wrap">
+        <a className="chip" target="_blank" rel="noreferrer" href={mapsSearchUrl(place.address)}>
+          Xem địa chỉ trên Google Maps
+        </a>
+        <a className="chip" target="_blank" rel="noreferrer" href={mapsPinUrl(place.lat, place.lng)}>
+          Xem theo vị trí đã định vị
+        </a>
+        <button type="button" className="chip" onClick={onUnsave}>
+          Bỏ lưu quán
+        </button>
+      </div>
+      <PlaceInfoText place={place} info={{ dishes: place.dishes, menu_meta: place.menu_meta ?? null }} />
+    </div>
   );
 }

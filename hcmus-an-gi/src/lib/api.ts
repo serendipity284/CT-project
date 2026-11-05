@@ -167,19 +167,96 @@ export async function postChat(
 export type ContributeBody = {
   name: string;
   campus: string;
-  lat: number;
-  lng: number;
-  price_min: number;
-  price_max: number;
+  lat?: number; // bỏ trống → server tự định vị theo địa chỉ
+  lng?: number;
+  maps_url?: string; // link Google Maps (tùy chọn) → server lấy tọa độ chính xác
+  price_min?: number; // bỏ trống → AI/server tự tính từ giá các món
+  price_max?: number;
   cuisine: string;
   address: string;
   hours: string;
   note?: string;
+  menu_meta?: { phone?: string | null; hours?: string | null; notes?: string | null };
 };
 
 export async function contributePlace(body: ContributeBody) {
-  return req<{ ok: boolean; id: number; rate_limit?: unknown }>("/places/contribute", {
+  return req<{ ok: boolean; id: number; lat: number; lng: number; approx_location: boolean; location_source: "client" | "maps_link" | "address"; rate_limit?: unknown }>("/places/contribute", {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+
+export type ScannedDish = {
+  name: string;
+  price: number | null;
+  category?: string | null;
+  note?: string | null;
+};
+
+export type ScanResult = {
+  ok: boolean;
+  images: number;
+  restaurant_hint?: string | null;
+  phone?: string | null;
+  hours?: string | null;
+  address_hint?: string | null;
+  dishes: ScannedDish[];
+  notes?: string[];
+  raw_notes?: string | null;
+};
+
+/** Gửi 1..10 ảnh (các trang của cùng một menu) để AI đọc một lần. */
+export async function scanMenuImages(files: File[]): Promise<ScanResult> {
+  const token = localStorage.getItem("hcmus_api_token");
+  const fd = new FormData();
+  files.forEach((f) => fd.append("files", f));
+  const res = await fetch(`${BASE}/menu/scan`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: fd,
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const j = await res.json();
+      msg = j.detail ?? JSON.stringify(j);
+    } catch { /* */ }
+    throw new Error(typeof msg === "string" ? msg : "Scan menu loi");
+  }
+  return res.json() as Promise<ScanResult>;
+}
+
+export async function contributeWithMenu(body: ContributeBody & { dishes: ScannedDish[] }) {
+  return req<{ ok: boolean; id: number; lat: number; lng: number; approx_location: boolean; location_source: "client" | "maps_link" | "address"; dishes_saved: number }>("/places/contribute-with-menu", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchDishes(placeId: number) {
+  return req<{ id: number; name: string; price: number | null; note: string | null }[]>(
+    `/places/${placeId}/dishes`,
+  );
+}
+
+export type ApiDish = {
+  id: number;
+  name: string;
+  category?: string | null;
+  price: number | null;
+  note: string | null;
+};
+export type ApiMenuMeta = { phone: string | null; hours: string | null; notes: string | null };
+export type ApiPlaceInfo = { dishes: ApiDish[]; menu_meta: ApiMenuMeta | null };
+export type ApiSavedPlace = ApiPlace & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
+
+/** Menu + thông tin AI đọc từ ảnh menu của một quán. */
+export async function fetchPlaceInfo(placeId: number) {
+  return req<ApiPlaceInfo>(`/places/${placeId}/info`);
+}
+
+/** Quán đã lưu của user: đủ thông tin + menu, không lọc theo bán kính. */
+export async function fetchSavedPlaces() {
+  return req<ApiSavedPlace[]>("/places/saved");
 }
