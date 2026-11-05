@@ -16,11 +16,19 @@ from pathlib import Path
 
 import mysql.connector
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
+
+from rate_limit import (
+    check_contribute_allowed,
+    queue_enter,
+    queue_leave,
+    queue_stats,
+    record_contribute,
+)
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(ENV_PATH, override=True)
@@ -450,6 +458,100 @@ def chat(body: ChatBody):
     }
 
 
+
+
+class ContributeIn(BaseModel):
+    name: str = Field(min_length=2, max_length=180)
+    campus: str
+    lat: float
+    lng: float
+    price_min: int = Field(ge=0)
+    price_max: int = Field(ge=0)
+    cuisine: str = Field(min_length=1, max_length=80)
+    address: str = Field(min_length=2, max_length=255)
+    hours: str = Field(default="", max_length=255)
+    note: Optional[str] = None
+
+
+@app.post("/places/contribute")
+def contribute_place(
+    body: ContributeIn,
+    request: Request,
+    user: dict = Depends(current_user),
+):
+    """Dong gop quan + rate limit + chong trung."""
+    if body.campus not in CAMPUSES:
+        raise HTTPException(400, "campus phai la q5 hoac lang")
+    if body.price_max < body.price_min:
+        raise HTTPException(400, "price_max phai >= price_min")
+    name = body.name.strip()
+
+    ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if not ip:
+        ip = request.client.host if request.client else "unknown"
+
+    ok, msg = check_contribute_allowed(user["id"], ip)
+    if not ok:
+        raise HTTPException(status_code=429, detail=msg)
+
+    depth = queue_enter()
+    try:
+        if depth > 50:
+            raise HTTPException(503, "He thong dang tai cao. Thu lai sau.")
+
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT id FROM places WHERE campus = %s AND LOWER(name) = LOWER(%s) LIMIT 1",
+                (body.campus, name),
+            )
+            if cur.fetchone():
+                raise HTTPException(409, "Quan nay da co (trung ten + co so).")
+
+            note = (body.note or "").strip()
+            address = body.address.strip()
+            if note:
+                address = f"{address} | Ghi chu: {note[:120]}"
+
+            # schema co the co/khong co cot source
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO places
+                    (name, campus, lat, lng, price_min, price_max, cuisine, address, hours, source)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'user')
+                    """,
+                    (
+                        name, body.campus, body.lat, body.lng,
+                        body.price_min, body.price_max, body.cuisine.strip(),
+                        address[:255], (body.hours or "Chua ro")[:255],
+                    ),
+                )
+            except Exception:
+                cur.execute(
+                    """
+                    INSERT INTO places
+                    (name, campus, lat, lng, price_min, price_max, cuisine, address, hours)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        name, body.campus, body.lat, body.lng,
+                        body.price_min, body.price_max, body.cuisine.strip(),
+                        address[:255], (body.hours or "Chua ro")[:255],
+                    ),
+                )
+            conn.commit()
+            new_id = cur.lastrowid
+            record_contribute(user["id"], ip)
+            return {"ok": True, "id": new_id, "rate_limit": queue_stats()}
+        finally:
+            cur.close()
+            conn.close()
+    finally:
+        queue_leave()
+
+
 @app.get("/health")
 def health():
     try:
@@ -458,4 +560,4 @@ def health():
         mysql_ok = True
     except Exception:
         mysql_ok = False
-    return {"status": "ok", "mysql": mysql_ok}
+    return {"status": "ok", "mysql": mysql_ok, "rate_limit": queue_stats()}

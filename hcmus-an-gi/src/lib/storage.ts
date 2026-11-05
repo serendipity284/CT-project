@@ -30,6 +30,7 @@ const K = {
   history: "hcmus_history",
   reviews: "hcmus_reviews",
   users: "hcmus_users_db",
+  contributions: "hcmus_contributions",
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -141,4 +142,39 @@ export function addReview(input: Omit<Review, "id" | "createdAt">): Review[] {
   const next = [row, ...list].slice(0, 200);
   write(K.reviews, next);
   return next;
+}
+
+
+export type ContributedPlace = {
+  id: number;
+  name: string;
+  campus: "q5" | "lang";
+  lat: number;
+  lng: number;
+  price_min: number;
+  price_max: number;
+  cuisine: string;
+  address: string;
+  hours: string;
+  note?: string;
+  authorName: string;
+  createdAt: string;
+};
+
+export function getContributions(): ContributedPlace[] {
+  return read<ContributedPlace[]>(K.contributions, []);
+}
+
+export function addContribution(
+  input: Omit<ContributedPlace, "id" | "createdAt">,
+): ContributedPlace[] {
+  const list = getContributions();
+  const row: ContributedPlace = {
+    ...input,
+    id: Date.now(),
+    createdAt: new Date().toISOString(),
+  };
+  list.unshift(row);
+  write(K.contributions, list);
+  return list;
 }

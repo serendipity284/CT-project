@@ -27,9 +27,10 @@ import {
   postReview as apiPostReview,
   signup as apiSignup,
   toggleSaveApi,
+  contributePlace,
+  postChat,
 } from "./lib/api";
 import {
-  apiPostChat,
   addHistory,
   addReview,
   getCurrentUser,
@@ -40,6 +41,8 @@ import {
   signOut,
   signUp,
   toggleSave,
+  addContribution,
+  getContributions,
   type HistoryItem,
   type Review,
   type User,
@@ -60,7 +63,7 @@ export default function App() {
   const [radius, setRadius] = useState(800);
   const [onlySaved, setOnlySaved] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [tab, setTab] = useState<"list" | "chat" | "me">("list");
+  const [tab, setTab] = useState<"list" | "chat" | "me" | "contribute">("list");
   const [intent, setIntent] = useState<Intent>({});
   const [turns, setTurns] = useState<ChatTurn[]>([
     {
@@ -79,6 +82,16 @@ export default function App() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState("");
   const [regenMsg, setRegenMsg] = useState("");
+  const [contribName, setContribName] = useState("");
+  const [contribCuisine, setContribCuisine] = useState("Cơm");
+  const [contribAddress, setContribAddress] = useState("");
+  const [contribHours, setContribHours] = useState("7:00–20:00");
+  const [contribMin, setContribMin] = useState(25000);
+  const [contribMax, setContribMax] = useState(45000);
+  const [contribNote, setContribNote] = useState("");
+  const [contribOffsetM, setContribOffsetM] = useState(200);
+  const [contribMsg, setContribMsg] = useState("");
+  const [contribBusy, setContribBusy] = useState(false);
 
   const loadFromApi = useCallback(async () => {
     if (!useApi) return;
@@ -125,6 +138,25 @@ export default function App() {
     } else {
       setUser(getCurrentUser());
       setReviews(getReviews());
+      const contribs = getContributions();
+      if (contribs.length) {
+        setPlaces((prev) => {
+          const extra = contribs.map((c) => ({
+            id: c.id,
+            name: c.name,
+            campus: c.campus,
+            lat: c.lat,
+            lng: c.lng,
+            price_min: c.price_min,
+            price_max: c.price_max,
+            cuisine: c.cuisine,
+            address: c.address,
+            hours: c.hours,
+          }));
+          const ids = new Set(extra.map((e) => e.id));
+          return [...extra, ...prev.filter((p) => !ids.has(p.id))];
+        });
+      }
     }
   }, [useApi, loadFromApi]);
 
@@ -257,7 +289,7 @@ export default function App() {
 
   try {
     if (useApi) {
-      const result = await apiPostChat(clean, {
+      const result = await postChat(clean, {
         campus: intent.campus,
         budget: intent.budget,
         radius_m: intent.radiusM
@@ -327,7 +359,91 @@ export default function App() {
     setTimeout(() => setRegenMsg(""), 3000);
   }
 
+
+  function defaultLatLng(campusId: CampusId, offsetM: number) {
+    const o = CAMPUSES[campusId];
+    const d = offsetM / 111320;
+    const ang = Math.random() * Math.PI * 2;
+    return {
+      lat: Number((o.lat + d * Math.cos(ang)).toFixed(6)),
+      lng: Number((o.lng + d * Math.sin(ang)).toFixed(6)),
+    };
+  }
+
+  async function submitContribution(e: React.FormEvent) {
+    e.preventDefault();
+    if (!user) {
+      setContribMsg("Cần đăng nhập để đóng góp quán.");
+      setPage("login");
+      return;
+    }
+    if (contribMax < contribMin) {
+      setContribMsg("Giá max phải ≥ giá min.");
+      return;
+    }
+    setContribBusy(true);
+    setContribMsg("");
+    const pos = defaultLatLng(campus, contribOffsetM);
+    try {
+      if (useApi) {
+        const res = await contributePlace({
+          name: contribName.trim(),
+          campus,
+          lat: pos.lat,
+          lng: pos.lng,
+          price_min: contribMin,
+          price_max: contribMax,
+          cuisine: contribCuisine.trim(),
+          address: contribAddress.trim(),
+          hours: contribHours.trim(),
+          note: contribNote.trim() || undefined,
+        });
+        setContribMsg(`Đã lưu MySQL (id=${res.id}). Bấm tải lại list nếu cần.`);
+        await loadFromApi();
+      } else {
+        const list = addContribution({
+          name: contribName.trim(),
+          campus,
+          lat: pos.lat,
+          lng: pos.lng,
+          price_min: contribMin,
+          price_max: contribMax,
+          cuisine: contribCuisine.trim(),
+          address: contribAddress.trim(),
+          hours: contribHours.trim(),
+          note: contribNote.trim() || undefined,
+          authorName: user.name,
+        });
+        setPlaces((prev) => {
+          const mapped = list.map((c) => ({
+            id: c.id,
+            name: c.name,
+            campus: c.campus,
+            lat: c.lat,
+            lng: c.lng,
+            price_min: c.price_min,
+            price_max: c.price_max,
+            cuisine: c.cuisine,
+            address: c.address,
+            hours: c.hours,
+          }));
+          const ids = new Set(mapped.map((m) => m.id));
+          return [...mapped, ...prev.filter((p) => !ids.has(p.id))];
+        });
+        setContribMsg("Đã lưu offline (localStorage). Hiện trên list/map.");
+      }
+      setContribName("");
+      setContribNote("");
+      setTab("list");
+    } catch (err) {
+      setContribMsg(err instanceof Error ? err.message : "Lỗi gửi đóng góp");
+    } finally {
+      setContribBusy(false);
+    }
+  }
+
   if (page === "login") {
+
     return (
       <LoginPage
         useApi={useApi}
@@ -461,14 +577,20 @@ export default function App() {
       <div className="stage">
         <aside className="panel">
           <div className="tabs">
-            {(["list", "chat", "me"] as const).map((id) => (
+            {(["list", "chat", "contribute", "me"] as const).map((id) => (
               <button
                 key={id}
                 type="button"
                 className={tab === id ? "tab is-on" : "tab"}
                 onClick={() => setTab(id)}
               >
-                {id === "list" ? "Quán" : id === "chat" ? "Hỏi trợ lý" : "Của tôi"}
+                {id === "list"
+                  ? "Quán"
+                  : id === "chat"
+                    ? "Hỏi trợ lý"
+                    : id === "contribute"
+                      ? "Đóng góp"
+                      : "Của tôi"}
               </button>
             ))}
           </div>
@@ -529,7 +651,76 @@ export default function App() {
             </div>
           )}
 
-          {tab === "me" && (
+          
+          {tab === "contribute" && (
+            <div className="stack">
+              <h2 className="section">Đóng góp quán mới</h2>
+              <p className="muted">
+                Thêm quán quanh <strong>{CAMPUSES[campus].short}</strong>. Offline lưu máy bạn;
+                online (API) lưu MySQL, có chống spam.
+              </p>
+              {!user && (
+                <button className="btn-primary" type="button" onClick={() => setPage("login")}>
+                  Đăng nhập để đóng góp
+                </button>
+              )}
+              <form className="stack" onSubmit={(e) => void submitContribution(e)}>
+                <label>
+                  Tên quán
+                  <input className="field" required minLength={2} value={contribName}
+                    onChange={(e) => setContribName(e.target.value)} placeholder="Cơm tấm cô Năm" />
+                </label>
+                <label>
+                  Loại món
+                  <input className="field" required value={contribCuisine}
+                    onChange={(e) => setContribCuisine(e.target.value)} />
+                </label>
+                <label>
+                  Địa chỉ / mô tả
+                  <input className="field" required minLength={4} value={contribAddress}
+                    onChange={(e) => setContribAddress(e.target.value)} placeholder="Gần cổng trường…" />
+                </label>
+                <label>
+                  Giờ mở
+                  <input className="field" value={contribHours}
+                    onChange={(e) => setContribHours(e.target.value)} />
+                </label>
+                <div className="row wrap">
+                  <label>
+                    Giá từ (đ)
+                    <input className="field tiny" type="number" min={5000} step={1000}
+                      value={contribMin} onChange={(e) => setContribMin(Number(e.target.value) || 0)} />
+                  </label>
+                  <label>
+                    Giá đến (đ)
+                    <input className="field tiny" type="number" min={5000} step={1000}
+                      value={contribMax} onChange={(e) => setContribMax(Number(e.target.value) || 0)} />
+                  </label>
+                </div>
+                <label>
+                  Cách cổng ~ (m)
+                  <input className="field" type="number" min={50} max={1500} step={50}
+                    value={contribOffsetM}
+                    onChange={(e) => setContribOffsetM(Number(e.target.value) || 200)} />
+                </label>
+                <label>
+                  Ghi chú
+                  <input className="field" value={contribNote}
+                    onChange={(e) => setContribNote(e.target.value)} placeholder="Món đáng thử…" />
+                </label>
+                {contribMsg && (
+                  <p className={
+                    /lỗi|cần|nhanh|vượt|trùng|tải cao/i.test(contribMsg) ? "error" : "muted"
+                  }>{contribMsg}</p>
+                )}
+                <button className="btn-primary" type="submit" disabled={contribBusy || !user}>
+                  {contribBusy ? "Đang gửi…" : "Gửi đóng góp"}
+                </button>
+              </form>
+            </div>
+          )}
+
+{tab === "me" && (
             <div className="stack">
               {!user && (
                 <>

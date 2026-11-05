@@ -162,3 +162,24 @@ export async function postChat(
     body: JSON.stringify({ message, ...slots }),
   });
 }
+
+
+export type ContributeBody = {
+  name: string;
+  campus: string;
+  lat: number;
+  lng: number;
+  price_min: number;
+  price_max: number;
+  cuisine: string;
+  address: string;
+  hours: string;
+  note?: string;
+};
+
+export async function contributePlace(body: ContributeBody) {
+  return req<{ ok: boolean; id: number; rate_limit?: unknown }>("/places/contribute", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
