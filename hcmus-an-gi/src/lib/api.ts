@@ -147,16 +147,42 @@ export async function postHistory(campus: string, budget: number, radiusM: numbe
   });
 }
 
+export type EmotionContext = {
+  category?: string;
+  confidence?: number;
+  wants_food_suggestion?: boolean;
+} | null;
+
 export async function postChat(
   message: string,
-  slots: { campus?: string; budget?: number; radius_m?: number },
+  slots: {
+    campus?: string;
+    budget?: number;
+    budget_is_default?: boolean;
+    radius_m?: number;
+    radius_is_default?: boolean;
+    food_type?: string;
+    food_group?: string;
+    preference?: string;
+    emotion?: EmotionContext;
+    emotion_turn?: number;
+    turn_count?: number;
+  },
 ) {
   return req<{
     ready: boolean;
     campus?: string;
     budget?: number;
+    budget_is_default?: boolean;
     radius_m?: number;
+    radius_is_default?: boolean;
+    food_type?: string;
+    food_group?: string;
+    preference?: string;
     reply: string;
+    emotion?: EmotionContext;
+    emotion_turn?: number;
+    turn_count?: number;
   }>("/chat", {
     method: "POST",
     body: JSON.stringify({ message, ...slots }),

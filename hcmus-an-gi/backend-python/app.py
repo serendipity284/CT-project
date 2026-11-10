@@ -42,6 +42,9 @@ load_dotenv(ENV_PATH, override=True)
 from input_understanding.extractor import extract_intent
 from input_understanding.validator import validate_intent
 from input_understanding.context import merge_context
+from input_understanding.normalizer import normalize_budget, normalize_budget_text
+from input_understanding.config import DEFAULT_BUDGET, DEFAULT_RADIUS_M
+from input_understanding.food import slugify_food, extract_search_keywords, fallback_extract_food
 
 load_dotenv()
 
@@ -425,18 +428,37 @@ def login(body: LoginIn):
 
 
 @app.get("/places")
-def list_places(campus: str = "q5", budget: int = 50000, radius_m: int = 800):
+def list_places(
+    campus: str = "q5",
+    budget: int = DEFAULT_BUDGET,
+    radius_m: int = DEFAULT_RADIUS_M,
+    food: Optional[str] = None,
+    cuisine: Optional[str] = None,
+):
     if campus not in CAMPUSES:
         raise HTTPException(400, "campus phai la q5 hoac lang")
     origin = CAMPUSES[campus]
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute(
+        sql = (
             "SELECT id, name, campus, lat, lng, price_min, price_max, cuisine, address, hours "
-            "FROM places WHERE campus = %s AND price_min <= %s",
-            (campus, budget),
+            "FROM places WHERE campus = %s AND price_min <= %s"
         )
+        params: list[Any] = [campus, budget]
+
+        food_target = food or cuisine
+        if food_target:
+            search_terms = extract_search_keywords(food_target, slugify_food(food_target))
+            if not search_terms:
+                search_terms = [food_target]
+            or_clauses = " OR ".join(["LOWER(cuisine) LIKE %s OR LOWER(name) LIKE %s"] * len(search_terms))
+            sql += f" AND ({or_clauses})"
+            for term in search_terms:
+                p = f"%{term.lower()}%"
+                params.extend([p, p])
+
+        cur.execute(sql, tuple(params))
         rows = cur.fetchall()
     finally:
         cur.close()
@@ -465,7 +487,6 @@ def list_places(campus: str = "q5", budget: int = 50000, radius_m: int = 800):
         )
     out.sort(key=lambda x: x["meters"])
     return out
-
 
 class ReviewIn(BaseModel):
     place_id: int
@@ -609,22 +630,10 @@ def normalize_text(text: str) -> str:
     return text
 
 def parse_money(text: str):
-    m = re.search(
-        r"(?:duoi|toi da|max|<)\s*(\d+(?:[.,]\d+)?)\s*(k|nghin|tr)?",
-        text,
-        re.I,
-    ) or re.search(r"(\d+(?:[.,]\d+)?)\s*(k|nghin|trieu|tr)\b", text, re.I)
-    if not m:
-        return None
-    raw = float(m.group(1).replace(",", "."))
-    unit = (m.group(2) or "").lower()
-    if unit.startswith("tr"):
-        return int(raw * 1_000_000)
-    if unit in ("k",) or unit.startswith("ngh"):
-        return int(raw * 1000)
-    if raw < 500:
-        return int(raw * 1000)
-    return int(raw)
+    """Nhan dien ngan sach trong van ban thuong (fallback khi Gemini loi).
+    Dung normalize_budget_text tu normalizer.py de ho tro day du cac dinh dang VND."""
+    return normalize_budget_text(text)
+
 
 
 def parse_radius(text: str):
@@ -640,9 +649,85 @@ class ChatBody(BaseModel):
     message: str
     campus: Optional[str] = None
     budget: Optional[int] = None
+    budget_is_default: Optional[bool] = False
     radius_m: Optional[int] = None
+    radius_is_default: Optional[bool] = False
+    food_type: Optional[str] = None
+    food_group: Optional[str] = None
+    preference: Optional[str] = None
     cuisine: Optional[str] = None
     keywords: list[str] = Field(default_factory=list)
+    # Emotion context
+    emotion: Optional[dict] = None
+    emotion_turn: Optional[int] = None
+    turn_count: Optional[int] = None
+
+
+def _build_emotion_reply(intent: dict) -> Optional[str]:
+    """
+    Tạo câu trả lời cảm xúc nếu intent là emotion_based_food_suggestion.
+    Trả về None nếu không cần trả lời cảm xúc.
+    """
+    emotion = intent.get("emotion")
+    if not emotion or not isinstance(emotion, dict):
+        return None
+
+    category = emotion.get("category")
+    wants_food = emotion.get("wants_food_suggestion", False)
+
+    # Map cảm xúc → gợi ý món ăn phù hợp (không bịa quán)
+    suggestions = {
+        "sadness": (
+            "Mình hiểu cảm giác buồn không dễ chịu chút nào 🥺 "
+            "Những lúc này, món ăn ấm áp như cháo, súp, hoặc một tô phở thường giúp cảm thấy dễ chịu hơn. "
+            "Bạn muốn mình tìm quán gần trường không?"
+        ),
+        "stress": (
+            "Deadline căng thẳng thật 😮‍💨 "
+            "Bạn nên ăn gì đó nhẹ nhàng để nạp năng lượng — cháo, bún, hoặc cơm bình thường đều ổn. "
+            "Muốn mình tìm quán phù hợp không?"
+        ),
+        "tiredness": (
+            "Mệt rồi thì cần ăn ngon để lấy lại sức 💪 "
+            "Món có nhiều chất như cơm, bún bò, hoặc phở sẽ giúp bạn tỉnh táo hơn. "
+            "Bạn muốn tìm quán nào không?"
+        ),
+        "happiness": (
+            "Vui quá thì phải ăn gì ngon chứ 🎉 "
+            "Bạn thử đồ ăn đặc sản hoặc quán nổi tiếng gần trường xem sao? "
+            "Nói cho mình biết ngân sách và khu vực, mình tìm cho nhé!"
+        ),
+        "celebration": (
+            "Chúc mừng bạn 🥳 Dịp đặc biệt thì xứng đáng được ăn ngon! "
+            "Bạn muốn đặc sản hay món bình thường? Và ở cơ sở nào?"
+        ),
+        "boredom": (
+            "Chán ăn cơm mãi rồi hả 😄 "
+            "Thử đổi sang bún, phở, bánh mì, hay đồ ăn vặt xem sao? "
+            "Mình có thể tìm quán mới gần đây cho bạn!"
+        ),
+        "comfort": (
+            "Muốn ăn gì đó nhẹ nhàng dễ chịu á 🍲 "
+            "Cháo, súp, hoặc bún riêu thường là lựa chọn tốt. "
+            "Bạn muốn mình tìm quán không?"
+        ),
+    }
+
+    if wants_food and category in suggestions:
+        return suggestions[category]
+
+    # Cảm xúc nhận ra nhưng chưa hỏi về ăn uống
+    empathy = {
+        "sadness": "Mình nghe thấy bạn đang buồn 🥺 Nếu muốn ăn gì đó để cảm thấy tốt hơn, bảo mình nhé!",
+        "stress": "Stress thật rồi 😮‍💨 Nếu muốn tìm chỗ ăn để thư giãn, mình sẵn sàng giúp!",
+        "tiredness": "Nghỉ ngơi chút đi nhé 😴 Nếu muốn ăn gì đó lấy sức, bảo mình!",
+        "happiness": "Vui ghê! 😊 Muốn tìm quán ăn không?",
+        "celebration": "Chúc mừng bạn! 🎊 Muốn đi ăn gì để ăn mừng không?",
+        "boredom": "Chán ăn rồi à 😄 Muốn mình gợi ý đổi món không?",
+        "comfort": "Muốn ăn gì nhẹ nhàng à? Bảo mình nhé!",
+    }
+
+    return empathy.get(category)
 
 
 @app.post("/chat")
@@ -651,12 +736,20 @@ def chat(body: ChatBody):
     previous = {
         "campus": body.campus,
         "budget": body.budget,
+        "budget_is_default": body.budget_is_default or False,
         "radius_m": body.radius_m,
+        "radius_is_default": body.radius_is_default or False,
+        "food_type": body.food_type,
+        "food_group": body.food_group,
+        "preference": body.preference,
         "cuisine": body.cuisine,
-        "keywords": body.keywords
+        "keywords": body.keywords,
+        # Truyền emotion context từ frontend vào ngữ cảnh hội thoại
+        "emotion": body.emotion,
+        "emotion_turn": body.emotion_turn,
+        "turn_count": body.turn_count or 0,
     }
 
-    
     try:
         extracted = extract_intent(body.message, previous)
         extracted = validate_intent(extracted)
@@ -681,51 +774,123 @@ def chat(body: ChatBody):
         if CAMPUS_LANG.search(normalized_message):
             intent["campus"] = "lang"
 
-        # Nhận diện ngân sách
-        money = parse_money(normalized_message)
+        # Nhận diện ngân sách – dùng normalizer (hỗ trợ 200000, 200k, v.v.)
+        money = parse_money(body.message)  # dùng text gốc (có dấu)
+        if money is None:
+            money = parse_money(normalized_message)  # fallback không dấu
 
         if money is not None:
             intent["budget"] = money
+            intent["budget_is_default"] = False
 
         # Nhận diện bán kính
         radius = parse_radius(normalized_message)
-
         if radius is not None:
             intent["radius_m"] = radius
+            intent["radius_is_default"] = False
 
-    if not intent.get("campus"):
-        reply = "Bạn muốn tìm quán ở cơ sở Quận 5 hay Làng Đại học?"
+        # Fallback nhận diện món ăn (Food Understanding - không dùng danh sách cứng)
+        food_res = fallback_extract_food(body.message)
+        if food_res.food_type:
+            intent["food_type"] = food_res.food_type
+        if food_res.food_group:
+            intent["food_group"] = food_res.food_group
+        if food_res.preference:
+            intent["preference"] = food_res.preference
+
+        # Fallback nhận diện cảm xúc (khi Gemini offline)
+        low_msg = body.message.lower()
+        emo_cat = None
+        if any(w in low_msg for w in ("stress", "căng thẳng", "cang thang", "áp lực", "ap luc", "deadline")):
+            emo_cat = "stress"
+        elif any(w in low_msg for w in ("buồn", "buon", "thất vọng", "that vong", "cô đơn", "co don")):
+            emo_cat = "sadness"
+        elif any(w in low_msg for w in ("mệt", "met", "kiệt sức", "kiet suc", "uể oải", "ue oai", "đuối", "duoi")):
+            emo_cat = "tiredness"
+        elif any(w in low_msg for w in ("vui", "hạnh phúc", "hanh phuc", "phấn khởi")):
+            emo_cat = "happiness"
+        elif any(w in low_msg for w in ("tự thưởng", "tu thuong", "ăn mừng", "an mung")):
+            emo_cat = "celebration"
+        elif any(w in low_msg for w in ("chán", "chan", "ngán", "ngan")):
+            emo_cat = "boredom"
+
+        turn = (previous.get("turn_count") or 0) + 1
+        intent["turn_count"] = turn
+
+        if emo_cat:
+            wants_food = any(w in low_msg for w in ("ăn", "an", "món", "mon", "quán", "quan", "gợi ý", "goi y"))
+            intent["intent"] = "emotion_based_food_suggestion"
+            intent["emotion"] = {"category": emo_cat, "confidence": 0.85, "wants_food_suggestion": wants_food}
+            intent["emotion_turn"] = turn
+
+        # Áp dụng giá trị mặc định cho intent tìm kiếm nếu chưa có
+        is_search = intent.get("intent", "search_food") in ("search_food", "refine_search", "recommendation")
+        if is_search:
+            if intent.get("budget") is None:
+                intent["budget"] = DEFAULT_BUDGET
+                intent["budget_is_default"] = True
+            if intent.get("radius_m") is None:
+                intent["radius_m"] = DEFAULT_RADIUS_M
+                intent["radius_is_default"] = True
+
+    # --- Xác định reply ---
+    detected_intent = intent.get("intent", "search_food")
+    food_key = intent.get("food_type")
+    food_display = food_key.replace("_", " ").title() if food_key else None
+
+    # Trường hợp emotion-based: trả lời cảm xúc nếu không đủ thông tin tìm kiếm
+    emotion_reply = _build_emotion_reply(intent)
+
+    if detected_intent == "emotion_based_food_suggestion" and emotion_reply:
+        reply = emotion_reply
+        ready = False
+
+    elif not intent.get("campus"):
+        # Nếu có cảm xúc, hỏi kèm theo ngữ cảnh cảm xúc
+        if emotion_reply:
+            reply = emotion_reply
+        elif food_display:
+            reply = f"Bạn muốn tìm quán {food_display} ở cơ sở Quận 5 hay Làng Đại học?"
+        else:
+            reply = "Bạn muốn tìm quán ở cơ sở Quận 5 hay Làng Đại học?"
+        ready = False
 
     elif not intent.get("budget"):
         reply = "Ngân sách tối đa mỗi người của bạn là bao nhiêu?"
+        ready = False
 
     elif not intent.get("radius_m"):
         reply = "Bạn muốn tìm quán trong khoảng cách bao xa?"
+        ready = False
 
     else:
-        reply = (
-            f"Đã hiểu yêu cầu! "
-            f"Cơ sở: {intent['campus']}, "
-            f"ngân sách: {intent['budget']:,}đ, "
-            f"khoảng cách: {intent['radius_m']}m."
-        )
+        food_part = f"quán {food_display} " if food_display else ""
+        pref_part = f"(vị: {intent['preference']}) " if intent.get("preference") else ""
+        b_val = intent['budget']
+        b_part = f"ngân sách mặc định: {b_val:,}đ" if intent.get("budget_is_default") else f"ngân sách: {b_val:,}đ"
+        r_val = intent['radius_m']
+        r_part = f"khoảng cách mặc định: {r_val}m" if intent.get("radius_is_default") else f"khoảng cách: {r_val}m"
+        campus_label = "Quận 5" if intent['campus'] == "q5" else "Làng Đại học"
 
-    ready = all([
-        intent.get("campus"),
-        intent.get("budget"),
-        intent.get("radius_m")
-    ])
+        reply = f"Đã hiểu yêu cầu! Tìm {food_part}{pref_part}quanh {campus_label}, {b_part}, {r_part}."
+        ready = True
 
     return {
         "ready": ready,
         "campus": intent.get("campus"),
         "budget": intent.get("budget"),
+        "budget_is_default": intent.get("budget_is_default", False),
         "radius_m": intent.get("radius_m"),
-        "reply": reply
+        "radius_is_default": intent.get("radius_is_default", False),
+        "food_type": intent.get("food_type"),
+        "food_group": intent.get("food_group"),
+        "preference": intent.get("preference"),
+        "reply": reply,
+        # Trả về emotion context để frontend lưu và gửi lại lượt sau
+        "emotion": intent.get("emotion"),
+        "emotion_turn": intent.get("emotion_turn"),
+        "turn_count": intent.get("turn_count"),
     }
-
-
-
 
 class ContributeIn(BaseModel):
     name: str = Field(min_length=2, max_length=180)
