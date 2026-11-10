@@ -242,8 +242,10 @@ def _ensure_menu_tables(cur):
         )
         """
     )
-    if _col_type(cur, "place_dishes", "category") is None:
-        cur.execute("ALTER TABLE place_dishes ADD COLUMN category VARCHAR(120) NULL AFTER name")
+    if _col_type(cur, "place_dishes", "ingredients") is None:
+        cur.execute("ALTER TABLE place_dishes ADD COLUMN ingredients TEXT NULL AFTER note")
+    if _col_type(cur, "place_dishes", "is_available") is None:
+        cur.execute("ALTER TABLE place_dishes ADD COLUMN is_available TINYINT(1) NOT NULL DEFAULT 1")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS place_menu_meta (
@@ -257,6 +259,7 @@ def _ensure_menu_tables(cur):
     )
 
 
+
 def derive_prices(pmin, pmax, dishes):
     """Bo trong gia -> lay min/max tu gia cac mon AI doc duoc (khong co thi 0 = chua ro)."""
     prices = [d.price for d in dishes if d.price is not None and d.price > 0]
@@ -264,6 +267,27 @@ def derive_prices(pmin, pmax, dishes):
     hi = pmax if pmax is not None else (max(prices) if prices else lo)
     return lo, max(hi, lo)
 
+def _parse_ings(v) -> list[str]:
+    if not v:
+        return []
+    if isinstance(v, (bytes, bytearray)):
+        v = v.decode("utf-8")
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            return []
+    return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
+
+
+def _clean_ings(items) -> list[str]:
+    seen, out = set(), []
+    for x in items or []:
+        s = str(x).strip().lower()[:60]
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:20]
 
 def fetch_menu(cur, place_ids):
     """(dishes_by_place, meta_by_place) cho cac quan; bang chua co thi tra rong."""
@@ -274,7 +298,7 @@ def fetch_menu(cur, place_ids):
     fmt = ",".join(["%s"] * len(place_ids))
     try:
         cur.execute(
-            f"SELECT id, place_id, name, category, price, note FROM place_dishes "
+            f"SELECT id, place_id, name, category, price, note, ingredients FROM place_dishes "
             f"WHERE place_id IN ({fmt}) ORDER BY id",
             list(place_ids),
         )
@@ -286,6 +310,7 @@ def fetch_menu(cur, place_ids):
                     "category": d["category"],
                     "price": d["price"],
                     "note": d["note"],
+                    "ingredients": _parse_ings(d["ingredients"]),
                 }
             )
     except Exception:
@@ -1052,6 +1077,7 @@ class DishIn(BaseModel):
     price: Optional[int] = Field(default=None, ge=0)
     category: Optional[str] = Field(default=None, max_length=120)
     note: Optional[str] = None
+    ingredients: list[str] = Field(default_factory=list)
 
 
 class MenuMetaIn(BaseModel):
@@ -1152,14 +1178,15 @@ def contribute_with_menu(
             _ensure_menu_tables(cur)
             for d in body.dishes[:150]:
                 cur.execute(
-                    "INSERT INTO place_dishes (place_id, name, category, price, note) "
-                    "VALUES (%s,%s,%s,%s,%s)",
+                    "INSERT INTO place_dishes (place_id, name, category, price, note, ingredients) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
                     (
                         place_id,
                         d.name.strip()[:180],
                         (d.category or "").strip()[:120] or None,
                         d.price,
                         (d.note or "").strip()[:255] or None,
+                        json.dumps(_clean_ings(d.ingredients), ensure_ascii=False),
                     ),
                 )
             mm = body.menu_meta
