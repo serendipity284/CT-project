@@ -37,6 +37,7 @@ import {
   type ApiMenuMeta,
   type ApiPlaceInfo,
   type ApiSavedPlace,
+  type EmotionContext,
   type ScannedDish,
 } from "./lib/api";
 import { mapsPinUrl, mapsSearchUrl, splitAddress } from "./lib/maps";
@@ -115,6 +116,10 @@ export default function App() {
   const [activeInfo, setActiveInfo] = useState<ApiPlaceInfo>({ dishes: [], menu_meta: null });
   const [savedApi, setSavedApi] = useState<ApiSavedPlace[]>([]);
   const [viewSavedId, setViewSavedId] = useState<number | null>(null);
+  // Emotion context from server – persisted across chat turns
+  const [emotionCtx, setEmotionCtx] = useState<EmotionContext>(null);
+  const [emotionTurn, setEmotionTurn] = useState<number | undefined>(undefined);
+  const [turnCount, setTurnCount] = useState(0);
 
   const loadFromApi = useCallback(async () => {
     if (!useApi) return;
@@ -345,16 +350,23 @@ export default function App() {
       const result = await postChat(clean, {
         campus: intent.campus,
         budget: intent.budget,
-        radius_m: intent.radiusM
+        radius_m: intent.radiusM,
+        emotion: emotionCtx,
+        emotion_turn: emotionTurn,
+        turn_count: turnCount,
       });
 
       const nextIntent: Intent = {
         campus: result.campus as Intent["campus"],
         budget: result.budget,
-        radiusM: result.radius_m
+        radiusM: result.radius_m,
       };
 
       setIntent(nextIntent);
+      // Persist emotion context for next turn
+      setEmotionCtx(result.emotion ?? null);
+      setEmotionTurn(result.emotion_turn);
+      setTurnCount(result.turn_count ?? turnCount + 1);
 
       setTurns(t => [
         ...t,
