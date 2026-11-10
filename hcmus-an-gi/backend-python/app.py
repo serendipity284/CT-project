@@ -74,7 +74,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+from routers.heana import router as heana_router
+app.include_router(heana_router, prefix="/api/heana")
 
 # ---------------------------------------------------------------- dinh vi dia chi
 GEO_UA = "hcmus-an-gi/1.0 (student project)"
