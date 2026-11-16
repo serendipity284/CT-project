@@ -1,0 +1,172 @@
+/* Giao diện chat-first (mockup số 2). Import SAU styles.css. */
+:root {
+  --hx-brown: #85502f;
+  --hx-beige: #f1ebe4;
+  --hx-paper: #f8f7f5;
+  --hx-ink: #4b3a2e;
+  --hx-bubble-line: #b9aea2;
+}
+
+.hx-app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--hx-paper);
+  font-family: var(--font);
+}
+
+/* ---------- Header ---------- */
+.hx-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  background: var(--hx-brown);
+  height: 5.4rem;
+  flex: none;
+}
+.hx-logo {
+  margin: 0;
+  align-self: center;
+  padding-left: 3rem;
+  color: var(--hx-beige);
+  font-family: "Chakra Petch", var(--font);
+  font-weight: 700;
+  font-size: 2.4rem;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+.hx-auth {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--hx-beige);
+  border-top-left-radius: 1.6rem;
+  padding: 0 1.2rem;
+}
+.hx-user { font-weight: 600; color: var(--hx-ink); }
+.hx-auth-btn {
+  border: 0;
+  background: none;
+  color: var(--hx-ink);
+  font: 700 1.3rem/1 var(--font);
+  text-transform: uppercase;
+}
+
+/* ---------- Body ---------- */
+.hx-body { flex: 1; display: flex; min-height: 0; }
+
+.hx-rail {
+  flex: none;
+  width: 3.2rem;
+  background: var(--hx-beige);
+  transition: width 0.2s ease;
+  overflow: hidden;
+}
+.hx-rail.is-open { width: 13rem; }
+.hx-burger {
+  display: grid;
+  place-items: center;
+  width: 3.2rem;
+  height: 3.2rem;
+  border: 0;
+  background: none;
+  color: var(--hx-brown);
+}
+.hx-menu { list-style: none; margin: 0.5rem 0 0; padding: 0 0.5rem; }
+.hx-menu button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0.7rem 0.6rem;
+  border-radius: 0.6rem;
+  color: var(--hx-ink);
+  font: 600 0.95rem var(--font);
+  white-space: nowrap;
+  text-align: left;
+}
+.hx-menu button:hover { background: #e4d9cc; }
+
+.hx-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1.2rem 2rem 1.4rem 2.4rem;
+}
+.hx-thread {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding-right: 0.5rem;
+}
+
+/* ---------- Bubbles ---------- */
+.hx-row { display: flex; align-items: flex-start; gap: 0.1rem; }
+.hx-row.me { justify-content: flex-end; }
+.hx-avatar { width: 4.8rem; height: auto; flex: none; }
+.hx-bubble {
+  margin: 0.8rem 0 0;
+  max-width: min(32rem, 75%);
+  padding: 0.7rem 1.1rem;
+  border: 1px solid var(--hx-bubble-line);
+  background: var(--hx-beige);
+  color: #a89d90;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+.hx-bubble.bot { border-radius: 0.2rem 1.6rem 1.6rem 1.6rem; }
+.hx-bubble.me {
+  margin-top: 0;
+  background: var(--hx-brown);
+  border-color: var(--hx-brown);
+  color: var(--hx-beige);
+  border-radius: 1.6rem 0.2rem 1.6rem 1.6rem;
+}
+
+/* ---------- Composer ---------- */
+.hx-composer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  background: var(--hx-beige);
+  border-radius: 999px;
+  padding: 0.3rem 0.4rem 0.3rem 1.4rem;
+  height: 3.2rem;
+}
+.hx-composer input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: none;
+  font: 500 1rem var(--font);
+  color: var(--hx-ink);
+}
+.hx-composer button {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--hx-brown);
+  color: var(--hx-beige);
+}
+
+/* ---------- Nút quay lại chat (ở màn hình cũ) ---------- */
+.hx-back { align-self: flex-start; }
+
+@media (max-width: 700px) {
+  .hx-header { height: 4rem; }
+  .hx-logo { font-size: 1.3rem; padding-left: 1rem; letter-spacing: 0.08em; }
+  .hx-auth-btn { font-size: 0.8rem; }
+  .hx-auth { padding: 0 0.7rem; }
+  .hx-main { padding: 0.8rem; }
+  .hx-rail.is-open { width: 10.5rem; }
+}

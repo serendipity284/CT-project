@@ -60,6 +60,7 @@ import {
   type User,
 } from "./lib/storage";
 import { CampusMap } from "./components/CampusMap";
+import { ChatHome, type NavTarget } from "./components/ChatHome";
 
 type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
 type MenuFile = { file: File; url: string };
@@ -91,6 +92,8 @@ export default function App() {
   const [note, setNote] = useState("");
   const [stars, setStars] = useState(5);
   const [page, setPage] = useState<"home" | "login">("home");
+  // "chat" = giao diện chat mới (mặc định); "classic" = giao diện danh sách + bản đồ cũ
+  const [screen, setScreen] = useState<"chat" | "classic">("chat");
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [routeMeta, setRouteMeta] = useState<{ distanceM: number; durationSec: number } | null>(
     null,
@@ -376,6 +379,7 @@ export default function App() {
       if (result.ready) {
         applyIntent(nextIntent);
         setTab("list");
+        setScreen("classic");
         void remember(clean);
       }
 
@@ -393,6 +397,7 @@ export default function App() {
       if (result.ready) {
         applyIntent(result.intent);
         setTab("list");
+        setScreen("classic");
       }
     }
   } catch (error) {
@@ -626,6 +631,29 @@ export default function App() {
     );
   }
 
+  if (screen === "chat") {
+    return (
+      <ChatHome
+        userName={user?.name ?? null}
+        turns={turns}
+        draft={draft}
+        onDraft={setDraft}
+        onSend={(t) => void sendChat(t)}
+        onLogin={() => setPage("login")}
+        onLogout={() => {
+          if (useApi) logoutApi();
+          else signOut();
+          setUser(null);
+        }}
+        onNavigate={(to: NavTarget) => {
+          if (to === "chat") return;
+          setTab(to);
+          setScreen("classic");
+        }}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -634,6 +662,9 @@ export default function App() {
           <h1 className="title">Ăn gì gần trường</h1>
         </div>
         <div className="row">
+          <button type="button" className="chip" onClick={() => setScreen("chat")}>
+            ← Trò chuyện
+          </button>
           <button type="button" className="chip" title="Tải lại quán" onClick={reloadPlaces}>
             <RefreshCw size={16} style={{ marginRight: 6, verticalAlign: "middle" }} />
             {useApi ? "Tải từ MySQL" : "Tải quán mới"}
