@@ -61,6 +61,7 @@ import {
 } from "./lib/storage";
 import { CampusMap } from "./components/CampusMap";
 import { ChatHome, type NavTarget } from "./components/ChatHome";
+import { PlacePage, type PlaceMode } from "./components/PlacePage";
 
 type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
 type MenuFile = { file: File; url: string };
@@ -93,7 +94,8 @@ export default function App() {
   const [stars, setStars] = useState(5);
   const [page, setPage] = useState<"home" | "login">("home");
   // "chat" = giao diện chat mới (mặc định); "classic" = giao diện danh sách + bản đồ cũ
-  const [screen, setScreen] = useState<"chat" | "classic">("chat");
+  const [screen, setScreen] = useState<"chat" | "classic" | "place">("chat");
+  const [placeMode, setPlaceMode] = useState<PlaceMode>("detail");
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [routeMeta, setRouteMeta] = useState<{ distanceM: number; durationSec: number } | null>(
     null,
@@ -641,35 +643,55 @@ export default function App() {
     );
   }
 
-  if (screen === "chat") {
+  if (screen === "chat" || (screen === "place" && active)) {
     return (
-      <ChatHome
-        userName={user?.name ?? null}
-        turns={turns}
-        results={ranked}
-        ratings={ratings}
-        reviews={reviews}
-        campus={campus}
-        onPickPlace={(id) => {
-          setActiveId(id);
-          setTab("list");
-          setScreen("classic");
-        }}
-        draft={draft}
-        onDraft={setDraft}
-        onSend={(t) => void sendChat(t)}
-        onLogin={() => setPage("login")}
-        onLogout={() => {
-          if (useApi) logoutApi();
-          else signOut();
-          setUser(null);
-        }}
-        onNavigate={(to: NavTarget) => {
-          if (to === "chat") return;
-          setTab(to);
-          setScreen("classic");
-        }}
-      />
+      <>
+        {/* ẩn (không huỷ) khung chat khi đang ở trang quán → quay lại vẫn còn danh sách */}
+        <div style={{ display: screen === "chat" ? "contents" : "none" }}>
+          <ChatHome
+            userName={user?.name ?? null}
+            turns={turns}
+            results={ranked}
+            ratings={ratings}
+            onOpenPlace={(id, mode) => {
+              setActiveId(id);
+              setPlaceMode(mode);
+              setScreen("place");
+            }}
+            draft={draft}
+            onDraft={setDraft}
+            onSend={(t) => void sendChat(t)}
+            onLogin={() => setPage("login")}
+            onLogout={() => {
+              if (useApi) logoutApi();
+              else signOut();
+              setUser(null);
+            }}
+            onNavigate={(to: NavTarget) => {
+              if (to === "chat") return;
+              setTab(to);
+              setScreen("classic");
+            }}
+          />
+        </div>
+        {screen === "place" && active && (
+          <PlacePage
+            mode={placeMode}
+            place={active}
+            campus={campus}
+            rating={ratings[active.id]}
+            reviews={activeReviews}
+            info={<PlaceInfoText place={active} info={activeInfo} />}
+            route={{ coords: routeCoords, meta: routeMeta, loading: routeLoading, error: routeError }}
+            onBack={() => setScreen("chat")}
+            onSwitch={setPlaceMode}
+            onBigMap={() => {
+              setTab("list");
+              setScreen("classic");
+            }}
+          />
+        )}
+      </>
     );
   }
 

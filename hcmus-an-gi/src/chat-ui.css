@@ -143,9 +143,13 @@
 .hx-bubble.me::before  { right: -0.85rem; clip-path: polygon(0 0, 100% 0, 0 100%); }
 
 /* ---------- Danh sách quán trong khung chat ---------- */
-.hx-results {
+.hx-results-wrap {
+  position: relative;
   margin-left: 5.7rem;
   width: min(32rem, calc(100% - 5.7rem));
+}
+.hx-results {
+  width: 100%;
   max-height: 30rem;
   overflow-y: auto;
   display: flex;
@@ -170,7 +174,6 @@
   text-align: center;
   flex: none;
 }
-.hx-item { display: flex; flex-direction: column; gap: 0.4rem; flex: none; }
 .hx-card.is-open { box-shadow: 0 0 0 2px var(--hx-brown) inset; }
 .hx-card:hover { box-shadow: 0 0 0 2px var(--hx-brown) inset; }
 .hx-card-info { flex: 1; display: flex; flex-direction: column; gap: 0.35rem; align-items: center; }
@@ -182,34 +185,88 @@
 .hx-thumb { width: 6.3rem; height: 6.3rem; flex: none; border-radius: 1rem; object-fit: cover; }
 .hx-thumb-empty { display: grid; place-items: center; background: #f1ebe4; font-size: 2.2rem; }
 
-/* ---------- Panel chi tiết / chỉ đường ---------- */
-.hx-detail { background: #fff; border-radius: 1.1rem; padding: 0.8rem 1rem 1rem; }
-.hx-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.8rem; }
-.hx-tabs button {
-  flex: 1;
+/* ---------- Popup bên phải danh sách ---------- */
+.hx-pop {
+  position: absolute;
+  left: calc(100% + 1.1rem);
+  transform: translateY(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 9.5rem;
+  padding: 0.6rem;
+  background: #fff;
+  border: 1px solid #e4d9cc;
+  border-radius: 1.2rem;
+  box-shadow: 0 8px 24px rgba(75, 58, 46, 0.18);
+}
+.hx-pop::before { /* mũi tên chỉ về thẻ quán */
+  content: "";
+  position: absolute;
+  left: -0.45rem;
+  top: 50%;
+  width: 0.8rem;
+  height: 0.8rem;
+  background: #fff;
+  border-left: 1px solid #e4d9cc;
+  border-bottom: 1px solid #e4d9cc;
+  transform: translateY(-50%) rotate(45deg);
+}
+.hx-pop button {
   border: 0;
   border-radius: 999px;
-  padding: 0.5rem 0.8rem;
+  padding: 0.65rem 1.1rem;
   background: var(--hx-beige);
   color: var(--hx-ink);
+  font: 700 1rem var(--font);
+}
+.hx-pop button.primary { background: var(--hx-brown); color: var(--hx-beige); }
+.hx-pop button:hover { filter: brightness(0.95); }
+@media (max-width: 900px) { /* màn hình hẹp: popup nổi ở dưới */
+  .hx-pop {
+    position: fixed;
+    left: 1rem;
+    right: 1rem;
+    top: auto !important;
+    bottom: 5.4rem;
+    transform: none;
+    flex-direction: row;
+  }
+  .hx-pop::before { display: none; }
+  .hx-pop button { flex: 1; }
+}
+
+/* ---------- Trang Chi tiết / Chỉ đường ---------- */
+.hx-page { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 1rem 2rem 1.4rem; overflow-y: auto; }
+.hx-page-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.hx-back-btn, .hx-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.55rem 1.1rem;
   font: 700 0.95rem var(--font);
 }
-.hx-tabs button.is-on { background: var(--hx-brown); color: var(--hx-beige); }
-.hx-info { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 0.9rem; color: #000; }
-.hx-info dt { font-weight: 700; color: #8d8174; }
-.hx-info dd { margin: 0; }
-.hx-info .hx-review { grid-column: 1 / -1; font-size: 0.9rem; color: #5c5046; }
-.hx-route p { margin: 0 0 0.5rem; color: #000; }
-.hx-muted { color: #8d8174 !important; font-size: 0.9rem; }
-.hx-minimap { position: relative; height: 15rem; border-radius: 0.9rem; overflow: hidden; border: 1px solid #e4d9cc; }
-.hx-links { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.7rem; }
+.hx-back-btn { background: var(--hx-beige); color: var(--hx-ink); }
+.hx-switch { background: var(--hx-brown); color: var(--hx-beige); }
+.hx-page-title { flex: 1; margin: 0; text-align: center; text-transform: uppercase; color: var(--hx-ink); font-size: 1.4rem; }
+.hx-page-body { width: min(46rem, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; min-height: 0; }
+.hx-page-sub { margin: 0; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 1.5rem; font-weight: 700; color: var(--hx-ink); }
+.hx-page-h3 { margin: 0.6rem 0 0; color: var(--hx-ink); }
+.hx-review-line { margin: 0; padding: 0.6rem 0.9rem; background: var(--hx-beige); border-radius: 0.9rem; }
+.hx-muted { color: #8d8174; font-size: 0.9rem; }
+.hx-route-body { min-height: 28rem; }
+.hx-bigmap { position: relative; flex: 1; min-height: 22rem; border-radius: 1.1rem; overflow: hidden; border: 1px solid #e4d9cc; }
+.hx-links { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .hx-links a, .hx-links button {
   border: 1px solid var(--hx-brown);
   border-radius: 999px;
-  padding: 0.3rem 0.8rem;
+  padding: 0.4rem 0.95rem;
   background: none;
   color: var(--hx-brown);
-  font: 600 0.85rem var(--font);
+  font: 600 0.9rem var(--font);
   text-decoration: none;
 }
 

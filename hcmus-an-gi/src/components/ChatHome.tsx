@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Menu, MessageCircle, Search, PlusCircle, User as UserIcon, Send, X } from "lucide-react";
 import type { ChatTurn } from "../lib/chat-intent";
 import type { Place } from "../lib/places-data";
-import type { CampusId } from "../lib/campuses";
-import type { Review } from "../lib/storage";
-import { PlaceDetail } from "./PlaceDetail";
+
 
 export type NavTarget = "chat" | "list" | "contribute" | "me";
 
@@ -14,9 +12,8 @@ type Props = {
   userName: string | null;
   results: ResultPlace[];
   ratings: Record<number, { avg: number; count: number }>;
-  reviews: Review[];
-  campus: CampusId;
-  onPickPlace: (id: number) => void;
+  /** Bấm "Chi tiết" / "Chỉ đường" trong popup → App chuyển sang trang tương ứng */
+  onOpenPlace: (id: number, mode: "detail" | "route") => void;
   turns: ChatTurn[];
   draft: string;
   onDraft: (v: string) => void;
@@ -68,10 +65,23 @@ function Star() {
 }
 
 export function ChatHome({
-  userName, results, ratings, reviews, campus, onPickPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate,
+  userName, results, ratings, onOpenPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate,
 }: Props) {
   const [open, setOpen] = useState(false);
-  const [openId, setOpenId] = useState<number | null>(null); // quán đang mở chi tiết
+  // popup bên phải danh sách: quán đang chọn + vị trí dọc (px, tính từ đầu khung danh sách)
+  const [pop, setPop] = useState<{ id: number; top: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const popScroll = useRef(0); // scrollTop của danh sách lúc mở popup
+
+  function togglePop(id: number, card: HTMLElement) {
+    if (pop?.id === id) return setPop(null);
+    const wrap = wrapRef.current?.getBoundingClientRect();
+    const c = card.getBoundingClientRect();
+    if (!wrap) return;
+    popScroll.current = card.parentElement?.scrollTop ?? 0;
+    const mid = c.top - wrap.top + c.height / 2;
+    setPop({ id, top: Math.min(Math.max(mid, 56), Math.max(wrap.height - 56, 56)) });
+  }
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -138,42 +148,50 @@ export function ChatHome({
                     <p className={t.role === "bot" ? "hx-bubble bot" : "hx-bubble me"}>{t.text}</p>
                   </div>
                   {isLastList && (
-                    <div className="hx-results">
-                      {results.length === 0 && (
-                        <p className="hx-empty">Không có quán khớp. Hãy thử tăng ngân sách hoặc khoảng cách.</p>
-                      )}
-                      {results.slice(0, 15).map((p) => {
-                        const r = ratings[p.id];
-                        const isOpen = openId === p.id;
-                        return (
-                          <div key={p.id} className="hx-item">
-                          <button type="button" className={isOpen ? "hx-card is-open" : "hx-card"}
-                            aria-expanded={isOpen}
-                            onClick={() => setOpenId(isOpen ? null : p.id)}>
-                            <div className="hx-card-info">
-                              <strong className="hx-card-name">{p.name}</strong>
-                              <span className="hx-card-price">{priceShort(p)}</span>
-                              <div className="hx-card-meta">
-                                <span className="hx-rate">
-                                  {r ? r.avg.toFixed(1) : "—"} <Star />
-                                </span>
-                                <span>{p.meters} m</span>
+                    <div className="hx-results-wrap" ref={wrapRef}>
+                      <div className="hx-results" onScroll={(e) => {
+                          if (Math.abs(e.currentTarget.scrollTop - popScroll.current) > 4) setPop(null);
+                        }}>
+                        {results.length === 0 && (
+                          <p className="hx-empty">Không có quán khớp. Hãy thử tăng ngân sách hoặc khoảng cách.</p>
+                        )}
+                        {results.slice(0, 15).map((p) => {
+                          const r = ratings[p.id];
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              className={pop?.id === p.id ? "hx-card is-open" : "hx-card"}
+                              aria-expanded={pop?.id === p.id}
+                              onClick={(e) => togglePop(p.id, e.currentTarget)}
+                            >
+                              <div className="hx-card-info">
+                                <strong className="hx-card-name">{p.name}</strong>
+                                <span className="hx-card-price">{priceShort(p)}</span>
+                                <div className="hx-card-meta">
+                                  <span className="hx-rate">
+                                    {r ? r.avg.toFixed(1) : "—"} <Star />
+                                  </span>
+                                  <span>{p.meters} m</span>
+                                </div>
                               </div>
-                            </div>
-                            <PlaceThumb url={p.image_url} alt={p.name} />
+                              <PlaceThumb url={p.image_url} alt={p.name} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {pop && (
+                        <div className="hx-pop" style={{ top: pop.top }} role="dialog">
+                          <button type="button" className="primary"
+                            onClick={() => { onOpenPlace(pop.id, "detail"); setPop(null); }}>
+                            Chi tiết
                           </button>
-                          {isOpen && (
-                            <PlaceDetail
-                              place={p}
-                              campus={campus}
-                              rating={r}
-                              reviews={reviews.filter((x) => x.placeId === p.id)}
-                              onOpenBigMap={() => onPickPlace(p.id)}
-                            />
-                          )}
-                          </div>
-                        );
-                      })}
+                          <button type="button"
+                            onClick={() => { onOpenPlace(pop.id, "route"); setPop(null); }}>
+                            Chỉ đường
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
