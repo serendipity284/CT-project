@@ -60,6 +60,8 @@ import {
   type User,
 } from "./lib/storage";
 import { CampusMap } from "./components/CampusMap";
+import { ChatHome, type NavTarget } from "./components/ChatHome";
+import { PlacePage, type PlaceMode } from "./components/PlacePage";
 
 type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
 type MenuFile = { file: File; url: string };
@@ -91,6 +93,9 @@ export default function App() {
   const [note, setNote] = useState("");
   const [stars, setStars] = useState(5);
   const [page, setPage] = useState<"home" | "login">("home");
+  // "chat" = giao diện chat mới (mặc định); "classic" = giao diện danh sách + bản đồ cũ
+  const [screen, setScreen] = useState<"chat" | "classic" | "place">("chat");
+  const [placeMode, setPlaceMode] = useState<PlaceMode>("detail");
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [routeMeta, setRouteMeta] = useState<{ distanceM: number; durationSec: number } | null>(
     null,
@@ -140,6 +145,7 @@ export default function App() {
           cuisine: p.cuisine,
           address: p.address,
           hours: p.hours,
+          image_url: (p as { image_url?: string | null }).image_url ?? null,
         })),
       );
       const revs = await apiFetchReviews();
@@ -304,6 +310,15 @@ export default function App() {
       ? activeReviews.reduce((s, r) => s + r.rating, 0) / activeReviews.length
       : 0;
 
+  const ratings = useMemo(() => {
+    const m: Record<number, { avg: number; count: number }> = {};
+    for (const r of reviews) {
+      const cur = m[r.placeId] ?? { avg: 0, count: 0 };
+      m[r.placeId] = { avg: (cur.avg * cur.count + r.rating) / (cur.count + 1), count: cur.count + 1 };
+    }
+    return m;
+  }, [reviews]);
+
   async function remember(query: string) {
     if (!user) return;
     if (useApi) {
@@ -375,7 +390,8 @@ export default function App() {
 
       if (result.ready) {
         applyIntent(nextIntent);
-        setTab("list");
+        setTurns(t => [...t, { role: "bot", text: "Danh sách quán", list: true }]);
+        setActiveId(null);
         void remember(clean);
       }
 
@@ -392,7 +408,8 @@ export default function App() {
 
       if (result.ready) {
         applyIntent(result.intent);
-        setTab("list");
+        setTurns(t => [...t, { role: "bot", text: "Danh sách quán", list: true }]);
+        setActiveId(null);
       }
     }
   } catch (error) {
@@ -543,6 +560,10 @@ export default function App() {
               price: d.price,
               category: d.category ?? undefined,
               note: d.note ?? undefined,
+              ingredients: (d.ingredients_text ?? "")
+                .split(/[,;]/)
+                .map((s) => s.trim())
+                .filter(Boolean),
             })),
             menu_meta: scanMeta
               ? {
@@ -622,6 +643,58 @@ export default function App() {
     );
   }
 
+  if (screen === "chat" || (screen === "place" && active)) {
+    return (
+      <>
+        {/* ẩn (không huỷ) khung chat khi đang ở trang quán → quay lại vẫn còn danh sách */}
+        <div style={{ display: screen === "chat" ? "contents" : "none" }}>
+          <ChatHome
+            userName={user?.name ?? null}
+            turns={turns}
+            results={ranked}
+            ratings={ratings}
+            onOpenPlace={(id, mode) => {
+              setActiveId(id);
+              setPlaceMode(mode);
+              setScreen("place");
+            }}
+            draft={draft}
+            onDraft={setDraft}
+            onSend={(t) => void sendChat(t)}
+            onLogin={() => setPage("login")}
+            onLogout={() => {
+              if (useApi) logoutApi();
+              else signOut();
+              setUser(null);
+            }}
+            onNavigate={(to: NavTarget) => {
+              if (to === "chat") return;
+              setTab(to);
+              setScreen("classic");
+            }}
+          />
+        </div>
+        {screen === "place" && active && (
+          <PlacePage
+            mode={placeMode}
+            place={active}
+            campus={campus}
+            rating={ratings[active.id]}
+            reviews={activeReviews}
+            info={<PlaceInfoText place={active} info={activeInfo} />}
+            route={{ coords: routeCoords, meta: routeMeta, loading: routeLoading, error: routeError }}
+            onBack={() => setScreen("chat")}
+            onSwitch={setPlaceMode}
+            onBigMap={() => {
+              setTab("list");
+              setScreen("classic");
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -630,6 +703,9 @@ export default function App() {
           <h1 className="title">Ăn gì gần trường</h1>
         </div>
         <div className="row">
+          <button type="button" className="chip" onClick={() => setScreen("chat")}>
+            ← Trò chuyện
+          </button>
           <button type="button" className="chip" title="Tải lại quán" onClick={reloadPlaces}>
             <RefreshCw size={16} style={{ marginRight: 6, verticalAlign: "middle" }} />
             {useApi ? "Tải từ MySQL" : "Tải quán mới"}
@@ -958,11 +1034,12 @@ export default function App() {
                         <div key={i} className="dish-row">
                           <input
                             className="field grow"
-                            value={d.name}
+                            placeholder="Thành phần (cách nhau bằng dấu phẩy)"
+                            value={d.ingredients_text ?? ""}
                             onChange={(e) => {
                               const v = e.target.value;
                               setScannedDishes((prev) =>
-                                prev.map((x, j) => (j === i ? { ...x, name: v } : x)),
+                                prev.map((x, j) => (j === i ? { ...x, ingredients_text: v } : x)),
                               );
                             }}
                           />
@@ -1382,23 +1459,52 @@ function buildInfoText(place: Place, info: ApiPlaceInfo): string {
 }
 
 function MenuBlock({ dishes }: { dishes: ApiDish[] }) {
+  const [openId, setOpenId] = useState<number | null>(null);
   if (dishes.length === 0) return <p className="muted">Chưa có menu cho quán này.</p>;
   return (
     <div className="menu-text">
-      <strong>Menu ({dishes.length} món)</strong>
+      <strong>Menu ({dishes.length} món) · bấm vào món để xem thành phần</strong>
       {groupDishes(dishes).map(([cat, items]) => (
         <div key={cat || "_"} className="menu-group">
           {cat && <em className="menu-cat">{cat}</em>}
           <ul>
-            {items.map((d) => (
-              <li key={d.id}>
-                <span>
-                  {d.name}
-                  {d.note ? ` (${d.note})` : ""}
-                </span>
-                <span>{d.price != null ? vnd(d.price) : "—"}</span>
-              </li>
-            ))}
+            {items.map((d) => {
+              const open = openId === d.id;
+              const ings = d.ingredients ?? [];
+              return (
+                <li key={d.id}>
+                  <button
+                    type="button"
+                    className="dish-btn"
+                    aria-expanded={open}
+                    onClick={() => setOpenId(open ? null : d.id)}
+                  >
+                    <span>
+                      {d.name}
+                      {d.note ? ` (${d.note})` : ""}
+                    </span>
+                    <span>{d.price != null ? vnd(d.price) : "—"}</span>
+                  </button>
+                  {open && (
+                    <div className="dish-ings">
+                      <strong>Thành phần</strong>
+                      {ings.length ? (
+                        <div className="ing-tags">
+                          {ings.map((x) => (
+                            <span key={x} className="ing-tag">{x}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted">Chưa có thông tin thành phần.</p>
+                      )}
+                      <p className="muted">
+                        Do người đóng góp nhập, chỉ để tham khảo. Nếu dị ứng nặng, hãy hỏi lại quán.
+                      </p>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ))}

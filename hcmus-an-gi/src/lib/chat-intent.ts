@@ -6,7 +6,12 @@ export type Intent = {
   radiusM?: number;
 };
 
-export type ChatTurn = { role: "user" | "bot"; text: string };
+export type ChatTurn = {
+  role: "user" | "bot";
+  text: string;
+  /** true = sau bong bóng này hiện danh sách quán ngay trong khung chat */
+  list?: boolean;
+};
 
 const CAMPUS_Q5 = /quận\s*5|q\.?\s*5|nguyễn văn cừ|nvc/i;
 const CAMPUS_LANG = /làng|linh trung|thủ đức|lang dai hoc|làng đại học/i;
