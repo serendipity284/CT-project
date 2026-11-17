@@ -37,7 +37,7 @@ export function generatePlaces(seed?: number): Place[] {
   let id = 1;
   for (const campus of Object.keys(CAMPUSES) as CampusId[]) {
     const c = CAMPUSES[campus];
-    const count = 8;
+    const count = 15;
     for (let i = 0; i < count; i++) {
       // ~±0.008 độ ≈ 800–900m
       const lat = c.lat + rand(-0.008, 0.008);

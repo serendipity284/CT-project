@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { Menu, MessageCircle, Search, PlusCircle, User as UserIcon, Send, X } from "lucide-react";
 import type { ChatTurn } from "../lib/chat-intent";
+import type { Place } from "../lib/places-data";
+import type { CampusId } from "../lib/campuses";
+import type { Review } from "../lib/storage";
+import { PlaceDetail } from "./PlaceDetail";
 
 export type NavTarget = "chat" | "list" | "contribute" | "me";
 
+type ResultPlace = Place & { meters: number };
+
 type Props = {
   userName: string | null;
+  results: ResultPlace[];
+  ratings: Record<number, { avg: number; count: number }>;
+  reviews: Review[];
+  campus: CampusId;
+  onPickPlace: (id: number) => void;
   turns: ChatTurn[];
   draft: string;
   onDraft: (v: string) => void;
@@ -34,10 +45,33 @@ function BotAvatar() {
   );
 }
 
+const k = (n: number) => `${Math.round(n / 1000)}k`;
+function priceShort(p: { price_min: number; price_max: number }) {
+  if (!(p.price_max > 0)) return "Chưa rõ giá";
+  return p.price_min === p.price_max ? k(p.price_min) : `${k(p.price_min)} - ${k(p.price_max)}`;
+}
+
+function PlaceThumb({ url, alt }: { url?: string | null; alt: string }) {
+  const [bad, setBad] = useState(false);
+  if (url && !bad) {
+    return <img className="hx-thumb" src={url} alt={alt} onError={() => setBad(true)} />;
+  }
+  return <div className="hx-thumb hx-thumb-empty" aria-hidden="true">🍜</div>;
+}
+
+function Star() {
+  return (
+    <svg className="hx-star" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1L12 18l-6.4 3.6L7 14.5l-5.3-5 7.2-.9z" fill="#f2dc2c" />
+    </svg>
+  );
+}
+
 export function ChatHome({
-  userName, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate,
+  userName, results, ratings, reviews, campus, onPickPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [openId, setOpenId] = useState<number | null>(null); // quán đang mở chi tiết
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -94,12 +128,57 @@ export function ChatHome({
               <BotAvatar />
               <p className="hx-bubble bot">Tôi có thể giúp gì cho bạn ?</p>
             </div>
-            {turns.slice(1).map((t, i) => (
-              <div key={i} className={t.role === "bot" ? "hx-row bot" : "hx-row me"}>
-                {t.role === "bot" && <BotAvatar />}
-                <p className={t.role === "bot" ? "hx-bubble bot" : "hx-bubble me"}>{t.text}</p>
-              </div>
-            ))}
+            {turns.map((t, i) => {
+              if (i === 0) return null; // lời chào đã hiện ở trên
+              const isLastList = t.list && i === turns.map((x) => !!x.list).lastIndexOf(true);
+              return (
+                <div key={i} className="hx-block">
+                  <div className={t.role === "bot" ? "hx-row bot" : "hx-row me"}>
+                    {t.role === "bot" && <BotAvatar />}
+                    <p className={t.role === "bot" ? "hx-bubble bot" : "hx-bubble me"}>{t.text}</p>
+                  </div>
+                  {isLastList && (
+                    <div className="hx-results">
+                      {results.length === 0 && (
+                        <p className="hx-empty">Không có quán khớp. Hãy thử tăng ngân sách hoặc khoảng cách.</p>
+                      )}
+                      {results.slice(0, 15).map((p) => {
+                        const r = ratings[p.id];
+                        const isOpen = openId === p.id;
+                        return (
+                          <div key={p.id} className="hx-item">
+                          <button type="button" className={isOpen ? "hx-card is-open" : "hx-card"}
+                            aria-expanded={isOpen}
+                            onClick={() => setOpenId(isOpen ? null : p.id)}>
+                            <div className="hx-card-info">
+                              <strong className="hx-card-name">{p.name}</strong>
+                              <span className="hx-card-price">{priceShort(p)}</span>
+                              <div className="hx-card-meta">
+                                <span className="hx-rate">
+                                  {r ? r.avg.toFixed(1) : "—"} <Star />
+                                </span>
+                                <span>{p.meters} m</span>
+                              </div>
+                            </div>
+                            <PlaceThumb url={p.image_url} alt={p.name} />
+                          </button>
+                          {isOpen && (
+                            <PlaceDetail
+                              place={p}
+                              campus={campus}
+                              rating={r}
+                              reviews={reviews.filter((x) => x.placeId === p.id)}
+                              onOpenBigMap={() => onPickPlace(p.id)}
+                            />
+                          )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <div ref={endRef} />
           </div>
 
