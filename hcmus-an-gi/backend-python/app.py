@@ -212,54 +212,6 @@ def resolve_location(address: str, lat, lng, maps_url: Optional[str] = None):
     return got[0], got[1], got[2], "address"
 
 
-<<<<<<< Updated upstream
-def _col_type(cur, table: str, col: str):
-    cur.execute(
-        "SELECT DATA_TYPE FROM information_schema.COLUMNS "
-        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s",
-        (MYSQL["database"], table, col),
-    )
-    r = cur.fetchone()
-    if not r:
-        return None
-    v = r["DATA_TYPE"] if isinstance(r, dict) else r[0]
-    if isinstance(v, (bytes, bytearray)):
-        v = v.decode()
-    return str(v).lower()
-
-
-def _ensure_menu_tables(cur):
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS place_dishes (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          place_id INT NOT NULL,
-          name VARCHAR(180) NOT NULL,
-          category VARCHAR(120) NULL,
-          price BIGINT NULL,
-          note VARCHAR(255) NULL,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          INDEX idx_dishes_place (place_id)
-        )
-        """
-    )
-    if _col_type(cur, "place_dishes", "category") is None:
-        cur.execute("ALTER TABLE place_dishes ADD COLUMN category VARCHAR(120) NULL AFTER name")
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS place_menu_meta (
-          place_id INT PRIMARY KEY,
-          phone VARCHAR(60) NULL,
-          hours VARCHAR(255) NULL,
-          notes TEXT NULL,
-          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        )
-        """
-    )
-
-
-=======
->>>>>>> Stashed changes
 def derive_prices(pmin, pmax, dishes):
     """Bo trong gia -> lay min/max tu gia cac mon AI doc duoc (khong co thi 0 = chua ro)."""
     prices = [d.price for d in dishes if d.price is not None and d.price > 0]
@@ -267,6 +219,27 @@ def derive_prices(pmin, pmax, dishes):
     hi = pmax if pmax is not None else (max(prices) if prices else lo)
     return lo, max(hi, lo)
 
+def _parse_ings(v) -> list[str]:
+    if not v:
+        return []
+    if isinstance(v, (bytes, bytearray)):
+        v = v.decode("utf-8")
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            return []
+    return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
+
+
+def _clean_ings(items) -> list[str]:
+    seen, out = set(), []
+    for x in items or []:
+        s = str(x).strip().lower()[:60]
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:20]
 
 def fetch_menu(cur, place_ids):
     """Load menu rows from the canonical dishes table."""
@@ -277,13 +250,8 @@ def fetch_menu(cur, place_ids):
     fmt = ",".join(["%s"] * len(place_ids))
     try:
         cur.execute(
-<<<<<<< Updated upstream
-            f"SELECT id, place_id, name, category, price, note FROM place_dishes "
-            f"WHERE place_id IN ({fmt}) ORDER BY id",
-=======
             f"SELECT id, place_id, name, price, description, image_url, ingredients "
             f"FROM dishes WHERE place_id IN ({fmt}) AND is_available = 1 ORDER BY id",
->>>>>>> Stashed changes
             list(place_ids),
         )
         for d in cur.fetchall():
@@ -293,13 +261,9 @@ def fetch_menu(cur, place_ids):
                     "name": d["name"],
                     "category": None,
                     "price": d["price"],
-<<<<<<< Updated upstream
-                    "note": d["note"],
-=======
                     "note": d["description"],
                     "ingredients": _parse_ings(d["ingredients"]),
                     "image_url": d["image_url"],
->>>>>>> Stashed changes
                 }
             )
     except Exception:
@@ -1014,6 +978,7 @@ class DishIn(BaseModel):
     price: Optional[int] = Field(default=None, ge=0)
     category: Optional[str] = Field(default=None, max_length=120)
     note: Optional[str] = None
+    ingredients: list[str] = Field(default_factory=list)
 
 
 class MenuMetaIn(BaseModel):
@@ -1095,16 +1060,6 @@ def contribute_with_menu(
 
             for d in body.dishes[:150]:
                 cur.execute(
-<<<<<<< Updated upstream
-                    "INSERT INTO place_dishes (place_id, name, category, price, note) "
-                    "VALUES (%s,%s,%s,%s,%s)",
-                    (
-                        place_id,
-                        d.name.strip()[:180],
-                        (d.category or "").strip()[:120] or None,
-                        d.price,
-                        (d.note or "").strip()[:255] or None,
-=======
                     "INSERT INTO dishes (place_id, name, price, ingredients, description, image_url) "
                     "VALUES (%s,%s,%s,%s,%s,%s)",
                     (
@@ -1114,7 +1069,6 @@ def contribute_with_menu(
                         json.dumps(_clean_ings(d.ingredients), ensure_ascii=False),
                         (d.note or d.category or "").strip()[:300] or None,
                         None,
->>>>>>> Stashed changes
                     ),
                 )
             mm = body.menu_meta

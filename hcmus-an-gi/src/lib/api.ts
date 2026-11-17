@@ -218,6 +218,7 @@ export type ScannedDish = {
   price: number | null;
   category?: string | null;
   note?: string | null;
+  ingredients_text?: string; // chỉ dùng ở client, tách thành mảng khi gửi
 };
 
 export type ScanResult = {
@@ -272,6 +273,7 @@ export type ApiDish = {
   category?: string | null;
   price: number | null;
   note: string | null;
+  ingredients?: string[];
 };
 export type ApiMenuMeta = { phone: string | null; hours: string | null; notes: string | null };
 export type ApiPlaceInfo = { dishes: ApiDish[]; menu_meta: ApiMenuMeta | null };
