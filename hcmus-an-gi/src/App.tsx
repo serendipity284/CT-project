@@ -143,6 +143,7 @@ export default function App() {
           cuisine: p.cuisine,
           address: p.address,
           hours: p.hours,
+          image_url: (p as { image_url?: string | null }).image_url ?? null,
         })),
       );
       const revs = await apiFetchReviews();
@@ -307,6 +308,15 @@ export default function App() {
       ? activeReviews.reduce((s, r) => s + r.rating, 0) / activeReviews.length
       : 0;
 
+  const ratings = useMemo(() => {
+    const m: Record<number, { avg: number; count: number }> = {};
+    for (const r of reviews) {
+      const cur = m[r.placeId] ?? { avg: 0, count: 0 };
+      m[r.placeId] = { avg: (cur.avg * cur.count + r.rating) / (cur.count + 1), count: cur.count + 1 };
+    }
+    return m;
+  }, [reviews]);
+
   async function remember(query: string) {
     if (!user) return;
     if (useApi) {
@@ -378,8 +388,8 @@ export default function App() {
 
       if (result.ready) {
         applyIntent(nextIntent);
-        setTab("list");
-        setScreen("classic");
+        setTurns(t => [...t, { role: "bot", text: "Danh sách quán", list: true }]);
+        setActiveId(null);
         void remember(clean);
       }
 
@@ -396,8 +406,8 @@ export default function App() {
 
       if (result.ready) {
         applyIntent(result.intent);
-        setTab("list");
-        setScreen("classic");
+        setTurns(t => [...t, { role: "bot", text: "Danh sách quán", list: true }]);
+        setActiveId(null);
       }
     }
   } catch (error) {
@@ -636,6 +646,15 @@ export default function App() {
       <ChatHome
         userName={user?.name ?? null}
         turns={turns}
+        results={ranked}
+        ratings={ratings}
+        reviews={reviews}
+        campus={campus}
+        onPickPlace={(id) => {
+          setActiveId(id);
+          setTab("list");
+          setScreen("classic");
+        }}
         draft={draft}
         onDraft={setDraft}
         onSend={(t) => void sendChat(t)}

@@ -106,27 +106,111 @@
 }
 
 /* ---------- Bubbles ---------- */
-.hx-row { display: flex; align-items: flex-start; gap: 0.1rem; }
-.hx-row.me { justify-content: flex-end; }
+.hx-block { display: flex; flex-direction: column; gap: 0.8rem; }
+.hx-row { display: flex; align-items: flex-start; gap: 0.9rem; }
+.hx-row.me { justify-content: flex-end; padding-right: 1rem; }
 .hx-avatar { width: 4.8rem; height: auto; flex: none; }
 .hx-bubble {
+  position: relative;
   margin: 0.8rem 0 0;
   max-width: min(32rem, 75%);
-  padding: 0.7rem 1.1rem;
-  border: 1px solid var(--hx-bubble-line);
+  padding: 0.7rem 1.3rem;
+  border: 1px solid #6f6256;
   background: var(--hx-beige);
-  color: #a89d90;
+  color: #8d8174;
   font-weight: 700;
   line-height: 1.35;
+  text-align: center;
   white-space: pre-wrap;
 }
-.hx-bubble.bot { border-radius: 0.2rem 1.6rem 1.6rem 1.6rem; }
+/* đuôi bong bóng: góc trên trái (bot) / trên phải (mình) nhọn ra ngoài */
+.hx-bubble.bot { border-radius: 0 1.8rem 1.8rem 1.8rem; }
 .hx-bubble.me {
   margin-top: 0;
-  background: var(--hx-brown);
-  border-color: var(--hx-brown);
-  color: var(--hx-beige);
-  border-radius: 1.6rem 0.2rem 1.6rem 1.6rem;
+  border-radius: 1.8rem 0 1.8rem 1.8rem;
+}
+.hx-bubble.bot::before,
+.hx-bubble.me::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  width: 0.9rem;
+  height: 0.9rem;
+  background: var(--hx-beige);
+  border-top: 1px solid #6f6256;
+}
+.hx-bubble.bot::before { left: -0.85rem; border-top-left-radius: 0; border-bottom-left-radius: 100% 100%; clip-path: polygon(0 0, 100% 0, 100% 100%); }
+.hx-bubble.me::before  { right: -0.85rem; clip-path: polygon(0 0, 100% 0, 0 100%); }
+
+/* ---------- Danh sách quán trong khung chat ---------- */
+.hx-results {
+  margin-left: 5.7rem;
+  width: min(32rem, calc(100% - 5.7rem));
+  max-height: 30rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1.1rem 1.3rem;
+  background: var(--hx-beige);
+  border-radius: 2rem;
+}
+.hx-empty { margin: 0; color: #8d8174; font-weight: 600; }
+.hx-card {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  border: 0;
+  background: #fff;
+  border-radius: 1.1rem;
+  padding: 0.9rem 0.9rem 0.9rem 1.2rem;
+  font: inherit;
+  color: #000;
+  text-align: center;
+  flex: none;
+}
+.hx-item { display: flex; flex-direction: column; gap: 0.4rem; flex: none; }
+.hx-card.is-open { box-shadow: 0 0 0 2px var(--hx-brown) inset; }
+.hx-card:hover { box-shadow: 0 0 0 2px var(--hx-brown) inset; }
+.hx-card-info { flex: 1; display: flex; flex-direction: column; gap: 0.35rem; align-items: center; }
+.hx-card-name { font-size: 1.15rem; text-transform: uppercase; }
+.hx-card-price { font-weight: 700; }
+.hx-card-meta { display: flex; justify-content: center; gap: 2rem; font-weight: 700; }
+.hx-rate { display: inline-flex; align-items: center; gap: 0.25rem; }
+.hx-star { width: 1.5rem; height: 1.5rem; }
+.hx-thumb { width: 6.3rem; height: 6.3rem; flex: none; border-radius: 1rem; object-fit: cover; }
+.hx-thumb-empty { display: grid; place-items: center; background: #f1ebe4; font-size: 2.2rem; }
+
+/* ---------- Panel chi tiết / chỉ đường ---------- */
+.hx-detail { background: #fff; border-radius: 1.1rem; padding: 0.8rem 1rem 1rem; }
+.hx-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.8rem; }
+.hx-tabs button {
+  flex: 1;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.5rem 0.8rem;
+  background: var(--hx-beige);
+  color: var(--hx-ink);
+  font: 700 0.95rem var(--font);
+}
+.hx-tabs button.is-on { background: var(--hx-brown); color: var(--hx-beige); }
+.hx-info { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 0.9rem; color: #000; }
+.hx-info dt { font-weight: 700; color: #8d8174; }
+.hx-info dd { margin: 0; }
+.hx-info .hx-review { grid-column: 1 / -1; font-size: 0.9rem; color: #5c5046; }
+.hx-route p { margin: 0 0 0.5rem; color: #000; }
+.hx-muted { color: #8d8174 !important; font-size: 0.9rem; }
+.hx-minimap { position: relative; height: 15rem; border-radius: 0.9rem; overflow: hidden; border: 1px solid #e4d9cc; }
+.hx-links { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.7rem; }
+.hx-links a, .hx-links button {
+  border: 1px solid var(--hx-brown);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  background: none;
+  color: var(--hx-brown);
+  font: 600 0.85rem var(--font);
+  text-decoration: none;
 }
 
 /* ---------- Composer ---------- */
@@ -135,10 +219,11 @@
   align-items: center;
   gap: 0.5rem;
   margin-top: 1rem;
-  background: var(--hx-beige);
+  background: #ffe6c7;
   border-radius: 999px;
   padding: 0.3rem 0.4rem 0.3rem 1.4rem;
   height: 3.2rem;
+  flex: none;
 }
 .hx-composer input {
   flex: 1;
