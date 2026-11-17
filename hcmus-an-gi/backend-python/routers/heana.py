@@ -79,8 +79,8 @@ def fetch_dishes(place_ids: list[int]) -> list[dict]:
     cur = conn.cursor(dictionary=True)
     placeholders = ",".join(["%s"] * len(place_ids))
     cur.execute(
-        f"SELECT id, place_id, name, price, ingredients FROM place_dishes "
-        f"WHERE place_id IN ({placeholders}) AND is_available=1 AND price IS NOT NULL",
+        f"SELECT id, place_id, name, price, ingredients FROM dishes "
+        f"WHERE place_id IN ({placeholders}) AND is_available=1 AND price > 0",
         place_ids,
     )
     rows = cur.fetchall()
