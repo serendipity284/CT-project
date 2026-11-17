@@ -2,7 +2,7 @@
 
 Frontend zip dùng localStorage để chạy ngay. Khi làm đồ án đầy đủ:
 
-1. Import `../public/hcmus-mysql.sql` vào MySQL 8.
+1. Import `../heana_schema.sql` vào MySQL 8. Đây là schema chuẩn cho backend hiện tại; `../public/hcmus-mysql.sql` là schema demo cũ, không tương thích với các endpoint hiện tại.
 2. Cài: `pip install -r requirements.txt`
 3. Copy `.env.example` → `.env`, điền `MYSQL_*`, `GOOGLE_MAPS_API_KEY`, `GEMINI_API_KEY`.
 4. Chạy: `uvicorn app:app --reload --port 8000`

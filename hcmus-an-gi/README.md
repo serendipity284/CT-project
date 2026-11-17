@@ -31,7 +31,7 @@ Mở `http://localhost:8080`.
 | Chat | Hỏi lại nếu thiếu campus / budget / radius → ghim kết quả |
 | Auth | Trang đăng nhập/đăng ký (email) — wire Better Auth hoặc backend Python |
 | Cá nhân | Lưu quán, lịch sử tìm, đánh giá 1–5 sao |
-| Schema MySQL | `public/hcmus-mysql.sql` để port Python + MySQL |
+| Schema MySQL | `heana_schema.sql` là schema chuẩn cho backend Python + MySQL; `public/hcmus-mysql.sql` là bản demo cũ |
 
 ## Google Maps + Gemini (bản Python của bạn)
 

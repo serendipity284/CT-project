@@ -212,6 +212,7 @@ def resolve_location(address: str, lat, lng, maps_url: Optional[str] = None):
     return got[0], got[1], got[2], "address"
 
 
+<<<<<<< Updated upstream
 def _col_type(cur, table: str, col: str):
     cur.execute(
         "SELECT DATA_TYPE FROM information_schema.COLUMNS "
@@ -257,6 +258,8 @@ def _ensure_menu_tables(cur):
     )
 
 
+=======
+>>>>>>> Stashed changes
 def derive_prices(pmin, pmax, dishes):
     """Bo trong gia -> lay min/max tu gia cac mon AI doc duoc (khong co thi 0 = chua ro)."""
     prices = [d.price for d in dishes if d.price is not None and d.price > 0]
@@ -266,7 +269,7 @@ def derive_prices(pmin, pmax, dishes):
 
 
 def fetch_menu(cur, place_ids):
-    """(dishes_by_place, meta_by_place) cho cac quan; bang chua co thi tra rong."""
+    """Load menu rows from the canonical dishes table."""
     dishes: dict[int, list] = {}
     meta: dict[int, dict] = {}
     if not place_ids:
@@ -274,8 +277,13 @@ def fetch_menu(cur, place_ids):
     fmt = ",".join(["%s"] * len(place_ids))
     try:
         cur.execute(
+<<<<<<< Updated upstream
             f"SELECT id, place_id, name, category, price, note FROM place_dishes "
             f"WHERE place_id IN ({fmt}) ORDER BY id",
+=======
+            f"SELECT id, place_id, name, price, description, image_url, ingredients "
+            f"FROM dishes WHERE place_id IN ({fmt}) AND is_available = 1 ORDER BY id",
+>>>>>>> Stashed changes
             list(place_ids),
         )
         for d in cur.fetchall():
@@ -283,48 +291,21 @@ def fetch_menu(cur, place_ids):
                 {
                     "id": d["id"],
                     "name": d["name"],
-                    "category": d["category"],
+                    "category": None,
                     "price": d["price"],
+<<<<<<< Updated upstream
                     "note": d["note"],
+=======
+                    "note": d["description"],
+                    "ingredients": _parse_ings(d["ingredients"]),
+                    "image_url": d["image_url"],
+>>>>>>> Stashed changes
                 }
             )
     except Exception:
         pass
-    try:
-        cur.execute(
-            f"SELECT place_id, phone, hours, notes FROM place_menu_meta WHERE place_id IN ({fmt})",
-            list(place_ids),
-        )
-        for m in cur.fetchall():
-            meta[m["place_id"]] = {"phone": m["phone"], "hours": m["hours"], "notes": m["notes"]}
-    except Exception:
-        pass
+    # Phone and free-form menu metadata are not part of the canonical schema.
     return dishes, meta
-
-
-@app.on_event("startup")
-def ensure_schema():
-    """Go gioi han: dia chi -> TEXT, gia -> BIGINT (chi chay ALTER khi cot dang la kieu nho)."""
-    try:
-        conn = mysql.connector.connect(**MYSQL)
-    except Exception:
-        return
-    cur = conn.cursor()
-    try:
-        _ensure_menu_tables(cur)
-        if _col_type(cur, "places", "address") in ("varchar", "char"):
-            cur.execute("ALTER TABLE places MODIFY address TEXT NOT NULL")
-        for c in ("price_min", "price_max"):
-            if _col_type(cur, "places", c) in ("int", "mediumint", "smallint", "tinyint"):
-                cur.execute(f"ALTER TABLE places MODIFY {c} BIGINT NOT NULL")
-        if _col_type(cur, "place_dishes", "price") in ("int", "mediumint", "smallint", "tinyint"):
-            cur.execute("ALTER TABLE place_dishes MODIFY price BIGINT NULL")
-        conn.commit()
-    except Exception as e:  # khong chan server khoi dong
-        print("ensure_schema:", e)
-    finally:
-        cur.close()
-        conn.close()
 
 
 CAMPUSES = {
@@ -442,7 +423,7 @@ def list_places(
     cur = conn.cursor(dictionary=True)
     try:
         sql = (
-            "SELECT id, name, campus, lat, lng, price_min, price_max, cuisine, address, hours "
+            "SELECT id, name, campus, lat, lng, price_min, price_max, cuisine, address, hours_text AS hours "
             "FROM places WHERE campus = %s AND price_min <= %s"
         )
         params: list[Any] = [campus, budget]
@@ -585,7 +566,7 @@ def list_history(user: dict = Depends(current_user)):
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            "SELECT id, campus, budget, radius_m, query, created_at FROM search_history "
+            "SELECT id, campus, budget, radius_m, required_dish, query_text AS query, result_count, created_at FROM search_history "
             "WHERE user_id = %s ORDER BY id DESC LIMIT 30",
             (user["id"],),
         )
@@ -603,7 +584,7 @@ def add_history(body: HistoryIn, user: dict = Depends(current_user)):
     cur = conn.cursor()
     try:
         cur.execute(
-            "INSERT INTO search_history (user_id, campus, budget, radius_m, query) "
+            "INSERT INTO search_history (user_id, campus, budget, radius_m, query_text) "
             "VALUES (%s, %s, %s, %s, %s)",
             (user["id"], body.campus, body.budget, body.radius_m, body.query[:300]),
         )
@@ -952,34 +933,15 @@ def contribute_place(
             address = body.address.strip()
             if note:
                 address = f"{address} | {note}"
+            address = address[:255]
 
-            # schema co the co/khong co cot source
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO places
-                    (name, campus, lat, lng, price_min, price_max, cuisine, address, hours, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'user')
-                    """,
-                    (
-                        name, body.campus, lat, lng,
-                        price_min, price_max, body.cuisine.strip(),
-                        address, (body.hours or "Chua ro")[:255],
-                    ),
-                )
-            except Exception:
-                cur.execute(
-                    """
-                    INSERT INTO places
-                    (name, campus, lat, lng, price_min, price_max, cuisine, address, hours)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        name, body.campus, lat, lng,
-                        price_min, price_max, body.cuisine.strip(),
-                        address, (body.hours or "Chua ro")[:255],
-                    ),
-                )
+            cur.execute(
+                """INSERT INTO places
+                (name, campus, lat, lng, price_min, price_max, cuisine, address, hours_text)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (name, body.campus, lat, lng, price_min, price_max,
+                 body.cuisine.strip(), address, (body.hours or "Chua ro")[:80] or None),
+            )
             conn.commit()
             new_id = cur.lastrowid
             record_contribute(user["id"], ip)
@@ -1120,38 +1082,20 @@ def contribute_with_menu(
             address = body.address.strip()
             if note:
                 address = f"{address} | {note}"
+            address = address[:255]
 
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO places
-                    (name, campus, lat, lng, price_min, price_max, cuisine, address, hours, source)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'user')
-                    """,
-                    (
-                        name, body.campus, lat, lng,
-                        price_min, price_max, body.cuisine.strip(),
-                        address, (body.hours or "Chua ro")[:255],
-                    ),
-                )
-            except Exception:
-                cur.execute(
-                    """
-                    INSERT INTO places
-                    (name, campus, lat, lng, price_min, price_max, cuisine, address, hours)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """,
-                    (
-                        name, body.campus, lat, lng,
-                        price_min, price_max, body.cuisine.strip(),
-                        address, (body.hours or "Chua ro")[:255],
-                    ),
-                )
+            cur.execute(
+                """INSERT INTO places
+                (name, campus, lat, lng, price_min, price_max, cuisine, address, hours_text)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (name, body.campus, lat, lng, price_min, price_max,
+                 body.cuisine.strip(), address, (body.hours or "Chua ro")[:80] or None),
+            )
             place_id = cur.lastrowid
 
-            _ensure_menu_tables(cur)
             for d in body.dishes[:150]:
                 cur.execute(
+<<<<<<< Updated upstream
                     "INSERT INTO place_dishes (place_id, name, category, price, note) "
                     "VALUES (%s,%s,%s,%s,%s)",
                     (
@@ -1160,19 +1104,22 @@ def contribute_with_menu(
                         (d.category or "").strip()[:120] or None,
                         d.price,
                         (d.note or "").strip()[:255] or None,
+=======
+                    "INSERT INTO dishes (place_id, name, price, ingredients, description, image_url) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
+                    (
+                        place_id,
+                        d.name.strip()[:180],
+                        d.price if d.price is not None else 0,
+                        json.dumps(_clean_ings(d.ingredients), ensure_ascii=False),
+                        (d.note or d.category or "").strip()[:300] or None,
+                        None,
+>>>>>>> Stashed changes
                     ),
                 )
             mm = body.menu_meta
-            if mm and (mm.phone or mm.hours or mm.notes):
-                cur.execute(
-                    "INSERT INTO place_menu_meta (place_id, phone, hours, notes) VALUES (%s,%s,%s,%s)",
-                    (
-                        place_id,
-                        (mm.phone or "").strip() or None,
-                        (mm.hours or "").strip() or None,
-                        (mm.notes or "").strip() or None,
-                    ),
-                )
+            if mm and mm.hours:
+                cur.execute("UPDATE places SET hours_text = %s WHERE id = %s", (mm.hours.strip()[:80], place_id))
             conn.commit()
             record_contribute(user["id"], ip or "unknown")
             return {
@@ -1201,7 +1148,7 @@ def list_saved_places(user: dict = Depends(current_user)):
     try:
         cur.execute(
             "SELECT p.id, p.name, p.campus, p.lat, p.lng, p.price_min, p.price_max, "
-            "p.cuisine, p.address, p.hours "
+            "p.cuisine, p.address, p.hours_text AS hours "
             "FROM saves s JOIN places p ON p.id = s.place_id "
             "WHERE s.user_id = %s ORDER BY p.id DESC",
             (user["id"],),
@@ -1250,7 +1197,7 @@ def list_dishes(place_id: int):
     try:
         try:
             cur.execute(
-                "SELECT id, name, category, price, note FROM place_dishes WHERE place_id = %s ORDER BY id",
+                "SELECT id, name, NULL AS category, price, description AS note FROM dishes WHERE place_id = %s AND is_available = 1 ORDER BY id",
                 (place_id,),
             )
             return cur.fetchall()

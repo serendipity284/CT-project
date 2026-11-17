@@ -21,12 +21,12 @@ Mở **phpMyAdmin** (`http://localhost/phpmyadmin`) hoặc MySQL Command Line:
 ```sql
 CREATE DATABASE hcmus_an_gi CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE hcmus_an_gi;
-SOURCE C:/Users/ADMIN/Downloads/hcmus-an-gi-source/hcmus-an-gi/public/hcmus-mysql.sql;
+SOURCE C:/path/to/hcmus-an-gi/heana_schema.sql;
 ```
 
-Trong phpMyAdmin: chọn database → tab **Import** → chọn file `public/hcmus-mysql.sql`.
+Trong phpMyAdmin: chọn database `hcmus_an_gi` → tab **Import** → chọn file `heana_schema.sql` ở thư mục gốc `hcmus-an-gi`.
 
-File SQL đã có bảng + 16 quán mẫu.
+File schema chuẩn tạo các bảng cho tìm kiếm, menu, dị ứng, lịch sử, đánh giá và chỉ đường trong hẻm. Nếu database đã tồn tại từ file SQL cũ, cần tạo database mới hoặc nâng cấp schema cũ trước; `CREATE TABLE IF NOT EXISTS` không tự đổi cấu trúc các bảng đã có.
 
 ## Bước 3 — Cấu hình backend
 
@@ -101,7 +101,7 @@ GET http://localhost:8000/places?campus=lang&budget=40000&radius_m=1000
 |-----|------------|
 | `mysql: false` trên /health | MySQL chưa Start; sai password trong `.env` |
 | Access denied | Đúng user/password XAMPP |
-| Table doesn't exist | Chưa Import `hcmus-mysql.sql` |
+| Table/column doesn't exist | Import schema `heana_schema.sql`; file `public/hcmus-mysql.sql` là schema demo cũ và không khớp backend hiện tại |
 | CORS | API đã bật `allow_origins=["*"]` |
 | Port 8000 bận | `uvicorn ... --port 8001` và đổi URL |
 

@@ -78,7 +78,15 @@ def fetch_dishes(place_ids: list[int]) -> list[dict]:
     conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
     placeholders = ",".join(["%s"] * len(place_ids))
+<<<<<<< Updated upstream
     cur.execute(f"SELECT * FROM dishes WHERE place_id IN ({placeholders}) AND is_available=1", place_ids)
+=======
+    cur.execute(
+        f"SELECT id, place_id, name, price, ingredients FROM dishes "
+        f"WHERE place_id IN ({placeholders}) AND is_available=1 AND price > 0",
+        place_ids,
+    )
+>>>>>>> Stashed changes
     rows = cur.fetchall()
     cur.close()
     conn.close()
