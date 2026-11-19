@@ -288,3 +288,10 @@ export async function fetchPlaceInfo(placeId: number) {
 export async function fetchSavedPlaces() {
   return req<ApiSavedPlace[]>("/places/saved");
 }
+
+import type { SurveyAnswers, UserPreference } from "./heana-types";
+
+export const saveSurveyApi = (a: SurveyAnswers) =>
+  req<UserPreference>("/api/heana/onboarding", { method: "POST", body: JSON.stringify(a) });
+
+export const fetchPreferenceApi = () => req<UserPreference>("/api/heana/preferences");

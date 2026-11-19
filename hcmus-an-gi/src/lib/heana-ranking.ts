@@ -191,23 +191,41 @@ export function hardFilterAndRank(
 }
 
 /** Chuyển importance 1-5 thành preference weights */
-export function preferenceFromSurvey(answers: {
-  price_importance: number;
-  distance_importance: number;
-  quality_importance: number;
-  allergies_text: string;
-}): UserPreference {
-  const { price_importance: p, distance_importance: d, quality_importance: q } = answers;
-  const total = p + d + q || 3;
+import type { SurveyAnswers, SurveyFactor } from "./heana-types";
+
+export const FACTOR_LABEL: Record<SurveyFactor, string> = {
+  price: "Giá cả (rẻ nhất)",
+  distance: "Khoảng cách (gần nhất)",
+  quality: "Có review tốt nhất",
+};
+
+const W = { primary: 0.45, secondary: 0.32, rest: 0.15, fresh: 0.05 };
+
+/** Phải khớp preference_from_choices ở backend. */
+export function preferenceFromChoices(a: SurveyAnswers): UserPreference {
+  const F: SurveyFactor[] = ["price", "distance", "quality"];
+  const w = {} as Record<SurveyFactor, number>;
+  if (a.q1 === "any") {
+    for (const f of F) w[f] = (1 - W.fresh) / 3;
+  } else {
+    const others = F.filter((f) => f !== a.q1);
+    w[a.q1] = W.primary;
+    if (a.q2 && a.q2 !== "any" && others.includes(a.q2)) {
+      w[a.q2] = W.secondary;
+      w[others.find((f) => f !== a.q2)!] = W.rest;
+    } else {
+      const half = (1 - W.fresh - W.primary) / 2;
+      w[others[0]] = half;
+      w[others[1]] = half;
+    }
+  }
+  const r = (n: number) => +n.toFixed(3);
   return {
-    w_price: +(p / (total + 1.5)).toFixed(3),
-    w_distance: +(d / (total + 1.5)).toFixed(3),
-    w_quality: +(q / (total + 1.5)).toFixed(3),
-    w_freshness: +(1.5 / (total + 1.5)).toFixed(3),
-    allergies: answers.allergies_text
-      .split(/[,;]/)
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
+    w_price: r(w.price),
+    w_distance: r(w.distance),
+    w_quality: r(w.quality),
+    w_freshness: W.fresh,
+    allergies: a.allergies_text.split(/[,;\n]/).map((s) => s.trim().toLowerCase()).filter(Boolean),
     survey_done: true,
   };
 }

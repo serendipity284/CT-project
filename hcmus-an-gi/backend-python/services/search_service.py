@@ -1,7 +1,7 @@
 """
 HEANA Search Service - Orchestrates Hard Filter + Soft Ranking + Preference
 """
-
+import re
 from __future__ import annotations
 
 from datetime import datetime
@@ -15,6 +15,33 @@ from services.ranking import (
     suggest_relaxation,
 )
 
+FACTORS = ("price", "distance", "quality")
+W_PRIMARY, W_SECONDARY, W_REST, W_FRESH = 0.45, 0.32, 0.15, 0.05
+
+
+def preference_from_choices(q1: str, q2: Optional[str], allergies_text: str) -> UserPreference:
+    """Khảo sát mới: Q1 = miền ưu tiên nhất, Q2 = miền phụ, Q3 = dị ứng."""
+    if q1 not in FACTORS:  # "any" -> chia đều
+        each = (1 - W_FRESH) / 3
+        w = {f: each for f in FACTORS}
+    else:
+        others = [f for f in FACTORS if f != q1]
+        if q2 in others:
+            rest = next(f for f in others if f != q2)
+            w = {q1: W_PRIMARY, q2: W_SECONDARY, rest: W_REST}
+        else:  # Q2 = "sao cũng được"
+            half = (1 - W_FRESH - W_PRIMARY) / 2
+            w = {q1: W_PRIMARY, others[0]: half, others[1]: half}
+
+    allergies = [a.strip().lower() for a in re.split(r"[,;\n]", allergies_text or "") if a.strip()]
+    return UserPreference(
+        w_price=round(w["price"], 3),
+        w_distance=round(w["distance"], 3),
+        w_quality=round(w["quality"], 3),
+        w_freshness=W_FRESH,
+        allergies=allergies,
+        survey_done=True,
+    )
 
 def rows_to_candidates(
     place_rows: list[dict],
