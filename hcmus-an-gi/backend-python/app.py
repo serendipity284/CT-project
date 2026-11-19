@@ -414,11 +414,9 @@ def list_places(
         lat, lng = float(p["lat"]), float(p["lng"])
         meters = haversine(origin["lat"], origin["lng"], lat, lng)
 
-        relaxed_radius = radius_m * 1.20
-        if meters > relaxed_radius:
+        
+        if meters > radius_m:
             continue
-
-    
         out.append(
             {
                 "id": p["id"],
@@ -434,6 +432,32 @@ def list_places(
                 "meters": round(meters),
             }
         )
+#Auto relax 
+    if len(out) == 0:
+         for p in rows:
+                lat, lng = float(p["lat"]), float(p["lng"])
+                meters = haversine(origin["lat"], origin["lng"], lat, lng)
+        
+                
+                if meters > radius_m*1.20:
+                    continue
+                out.append(
+                    {
+                        "id": p["id"],
+                        "name": p["name"],
+                        "campus": p["campus"],
+                        "lat": lat,
+                        "lng": lng,
+                        "price_min": int(p["price_min"]), 
+                        "price_max": int(p["price_max"]),
+                        "cuisine": p["cuisine"],
+                        "address": p["address"],
+                        "hours": p["hours"],
+                        "meters": round(meters),
+                    }
+                )
+
+
     out.sort(key=lambda x: x["meters"])
     return out
 

@@ -128,7 +128,6 @@ def run_search(
 
                 top_k=top_k
             )
-        return ranked, relaxation or {}
         
         
 
