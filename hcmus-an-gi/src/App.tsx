@@ -46,6 +46,9 @@ import {
 } from "./lib/api";
 import { mapsPinUrl, mapsSearchUrl, splitAddress } from "./lib/maps";
 import { shrinkImage } from "./lib/image";
+//random-suggest-test
+import { suggestRandomPlaces } from "./lib/random-suggest";
+
 import {
   addHistory,
   addReview,
@@ -74,6 +77,7 @@ type MenuFile = { file: File; url: string };
 type ScanMeta = { phone: string; hours: string; notes: string };
 
 export default function App() {
+    const [suggestedIds, setSuggestedIds] = useState<number[]>([]);
   const useApi = apiEnabled();
   const [mysqlOk, setMysqlOk] = useState<boolean | null>(null);
   const [apiError, setApiError] = useState("");
@@ -139,6 +143,8 @@ export default function App() {
     q2: null,
   });
   const askedFor = useRef<string | null>(null);
+  // true = khảo sát này được bật từ nút 🎲 -> làm xong sẽ tự động random
+  const pendingRandom = useRef(false);
 
   const loadFromApi = useCallback(async () => {
     if (!useApi) return;
@@ -387,6 +393,47 @@ export default function App() {
     if (next.budget) setBudget(next.budget);
     if (next.radiusM) setRadius(next.radiusM);
   }
+    //recommend random 
+    // opts.pref: dùng khảo sát vừa làm xong (state `pref` chưa kịp cập nhật trong cùng lượt render)
+    // opts.reset: khảo sát mới -> cho phép bốc lại cả những quán đã gợi ý trước đó
+    // opts.echo === false: không thêm bong bóng "user" (đã thêm lúc bắt đầu khảo sát)
+    function suggestRandom(opts?: { pref?: UserPreference; reset?: boolean; echo?: boolean }) {
+        if (opts?.echo !== false) {
+            setTurns((t) => [...t, { role: "user", text: "🎲 Gợi ý cho mình 5 quán" }]);
+        }
+        const picks = suggestRandomPlaces(
+            ranked, ratings, opts?.pref ?? pref, CAMPUSES[campus], radius,
+            opts?.reset ? [] : suggestedIds, 5,
+        );
+        if (!picks.length) {
+            setTurns((t) => [...t, {
+                role: "bot",
+                text: "Chưa có quán nào khớp ngân sách và bán kính hiện tại. Bạn thử tăng ngân sách hoặc khoảng cách nhé."
+            }]);
+            return;
+        }
+        const ids = picks.map((s) => s.place.id);
+        setSuggestedIds((prev) => [...new Set([...(opts?.reset ? [] : prev), ...ids])]);
+        setActiveId(ids[0]);
+        setTurns((t) => [...t, {
+            role: "bot",
+            text: picks.length < 5
+                ? `Hiện chỉ có ${picks.length} quán khớp ngân sách và bán kính, mình gợi ý hết cho bạn nhé! Bấm vào từng quán để xem chi tiết hoặc chỉ đường.`
+                : "Mình bốc ngẫu nhiên 5 quán hợp với ưu tiên của bạn nhé! Bấm vào từng quán để xem chi tiết hoặc chỉ đường.",
+            list: true,
+            picks: ids,
+        }]);
+    }
+
+  /** Nút 🎲 chính: làm khảo sát trước, xong mới random dựa trên khảo sát mới. */
+  function startRandomFlow() {
+    setTurns((t) => [...t, { role: "user", text: "🎲 Gợi ý cho mình 5 quán" }]);
+    startSurvey(
+      false,
+      "Trước khi bốc quán, bạn trả lời nhanh bài khảo sát này để mình gợi ý đúng ý bạn nhất nhé!\n\n",
+    );
+    pendingRandom.current = true; // đặt SAU startSurvey (startSurvey sẽ reset cờ này)
+  }
 
   async function sendChat(text: string) {
   const clean = text.trim();
@@ -566,15 +613,16 @@ export default function App() {
     }
   }
 
-  async function submitSurvey(a: SurveyAnswers) {
+  async function submitSurvey(a: SurveyAnswers): Promise<UserPreference> {
+    let p: UserPreference;
     if (user && useApi) {
-      setPref(await saveSurveyApi(a));                // server tính + lưu MySQL
+      p = await saveSurveyApi(a);                     // server tính + lưu MySQL
     } else {
-      const p = preferenceFromChoices(a);             // khách: không gọi API
+      p = preferenceFromChoices(a);                   // khách: không gọi API
       setGuestPref(p);
-      setPref(p);
     }
-    
+    setPref(p);
+    return p;
   }
 
   const Q1_CHOICES = [
@@ -587,13 +635,14 @@ export default function App() {
   const ASK_ALLERGY =
     'Câu 3: Cảm ơn bạn! Bạn có thành phần nào khiến bạn dị ứng hoặc khó chịu khi ăn không? Gõ vào ô chat bên dưới (cách nhau bằng dấu phẩy), hoặc gõ "không" nếu không có.';
 
-  function startSurvey(first: boolean) {
+  function startSurvey(first: boolean, customIntro?: string) {
+    pendingRandom.current = false; // khảo sát mở từ menu / lần đầu thì không tự random
     setSurveyStage("q1");
     setSurveyAns({ q1: "any", q2: null });
     setScreen("chat");
-    const intro = first
+    const intro = customIntro ?? (first
       ? "Chào bạn mới! Trước khi chúng ta bắt đầu việc lựa chọn quán, bạn hãy thực hiện bài khảo sát này để giúp mình tìm quán phù hợp với bạn nhất! (Bạn có thể thực hiện lại bất kỳ lúc nào bạn muốn)\n\n"
-      : "";
+      : "");
     setTurns((t) => [
       ...t,
       {
@@ -644,8 +693,17 @@ export default function App() {
     setTurns((t) => [...t, { role: "user", text }]);
     setDraft("");
     try {
-      await submitSurvey(answers);
+      const newPref = await submitSurvey(answers);
       setSurveyStage(null);
+      if (pendingRandom.current) {
+        pendingRandom.current = false;
+        setTurns((t) => [
+          ...t,
+          { role: "bot", text: "Cảm ơn bạn! Dựa trên khảo sát vừa rồi, mình bốc quán cho bạn ngay đây." },
+        ]);
+        suggestRandom({ pref: newPref, reset: true, echo: false });
+        return;
+      }
       setTurns((t) => [
         ...t,
         {
@@ -798,8 +856,10 @@ export default function App() {
             onOpenPlace={(id, mode) => {
               setActiveId(id);
               setPlaceMode(mode);
-              setScreen("place");
-            }}
+                setScreen("place");
+                    }}
+                    onSuggest={startRandomFlow}
+                    onReroll={() => suggestRandom()}
             draft={draft}
             onDraft={setDraft}
             onSend={(t) => void sendChat(t)}
