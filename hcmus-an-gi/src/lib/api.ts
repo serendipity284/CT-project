@@ -55,12 +55,10 @@ export async function health() {
   return req<{ status: string; mysql: boolean }>("/health");
 }
 
-export async function fetchPlaces(campus: string, budget: number, radiusM: number) {
-  const q = new URLSearchParams({
-    campus,
-    budget: String(budget),
-    radius_m: String(radiusM),
-  });
+export async function fetchPlaces(campus: string, budget?: number, radiusM?: number) {
+  const q = new URLSearchParams({ campus });
+  if (budget != null) q.set("budget", String(budget));
+  if (radiusM != null) q.set("radius_m", String(radiusM));
   return req<ApiPlace[]>(`/places?${q}`);
 }
 

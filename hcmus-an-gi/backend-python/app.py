@@ -454,9 +454,9 @@ def login(body: LoginIn):
 
 @app.get("/places")
 def list_places(
-    campus: str = "q5",
-    budget: int = DEFAULT_BUDGET,
-    radius_m: int = DEFAULT_RADIUS_M,
+   campus: str = "q5",
+    budget: Optional[int] = None,
+    radius_m: Optional[int] = None,
     food: Optional[str] = None,
     cuisine: Optional[str] = None,
 ):
@@ -468,9 +468,12 @@ def list_places(
     try:
         sql = (
             "SELECT id, name, campus, lat, lng, price_min, price_max, cuisine, address, hours "
-            "FROM places WHERE campus = %s AND price_min <= %s"
-        )
-        params: list[Any] = [campus, budget]
+            "FROM places WHERE campus = %s"
+        )   
+        params: list[Any] = [campus]
+        if budget is not None:
+                sql += " AND price_min <= %s"
+                params.append(budget)
 
         food_target = food or cuisine
         if food_target:
@@ -493,7 +496,7 @@ def list_places(
     for p in rows:
         lat, lng = float(p["lat"]), float(p["lng"])
         meters = haversine(origin["lat"], origin["lng"], lat, lng)
-        if meters > radius_m:
+        if radius_m is not None and meters > radius_m:
             continue
         out.append(
             {
