@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
+from services.ingredient_names import canonical_ingredients
 from services.ranking import (
     DishCandidate,
     PlaceCandidate,
@@ -40,7 +41,7 @@ def rows_to_candidates(
                 dish_id=d["id"],
                 dish_name=d["name"],
                 price=int(d["price"]),
-                ingredients=list(ingredients),
+                ingredients=canonical_ingredients(ingredients),
                 place_id=pid,
             )
         )

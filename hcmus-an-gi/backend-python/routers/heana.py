@@ -26,6 +26,8 @@ from models.schemas import (
     SearchResponse,
     ExtractedIntent,
 )
+from services.ingredient_names import canonical_ingredients
+from services.ingredient_catalog import resolve_names
 from services.ranking import UserPreference
 from services.search_service import (
     candidate_to_dict,
@@ -121,6 +123,7 @@ def fetch_user_preference(user_id: str) -> UserPreference:
 
 
 def save_user_preference(user_id: str, pref: UserPreference, survey_done: bool = True):
+    pref.allergies = canonical_ingredients(pref.allergies, resolve_names(pref.allergies))
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
@@ -283,6 +286,13 @@ def search_places(
     place_rows = fetch_places(body.campus)
     place_ids = [p["id"] for p in place_rows]
     dish_rows = fetch_dishes(place_ids)
+
+    if pref.allergies:
+        labels = pref.allergies + [name for dish in dish_rows for name in dish["ingredients"] or []]
+        catalog = resolve_names(labels, learn=False)
+        pref.allergies = canonical_ingredients(pref.allergies, catalog)
+        for dish in dish_rows:
+            dish["ingredients"] = canonical_ingredients(dish["ingredients"] or [], catalog)
 
     ranked, relaxation = run_search(
         place_rows=place_rows,
