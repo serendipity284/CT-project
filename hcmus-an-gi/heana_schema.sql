@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS places (
 -- ----------------------------
 -- 4. Dishes (Menu chi tiết - cần cho Allergy Filter)
 -- ----------------------------
+CREATE TABLE IF NOT EXISTS ingredient_aliases (
+  alias VARCHAR(191) PRIMARY KEY,
+  canonical_name VARCHAR(191) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
 CREATE TABLE IF NOT EXISTS dishes (
   id            INT AUTO_INCREMENT PRIMARY KEY,
   place_id      INT NOT NULL,

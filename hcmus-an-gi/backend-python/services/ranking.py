@@ -5,6 +5,8 @@ Compliant with Problem Specification sections 1.4 & PAT-01 / PAT-02
 
 from __future__ import annotations
 
+from services.ingredient_names import normalize_ingredient
+
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, time, date
@@ -87,11 +89,6 @@ def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     dlambda = math.radians(lng2 - lng1)
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     return 2 * R * math.asin(min(1.0, math.sqrt(a)))
-
-
-def normalize_ingredient(s: str) -> str:
-    """Chuẩn hóa tên thành phần để so khớp dị ứng."""
-    return s.strip().lower()
 
 
 def has_allergy_conflict(ingredients: list[str], allergies: list[str]) -> bool:
