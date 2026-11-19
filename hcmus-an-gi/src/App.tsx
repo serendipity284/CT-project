@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bookmark, RefreshCw, Send } from "lucide-react";
 import {
   BUDGET_PRESETS,
@@ -13,15 +13,14 @@ import { replyFor, type ChatTurn, type Intent } from "./lib/chat-intent";
 import type { Place } from "./lib/places-data";
 import { generatePlaces, initialPlaces } from "./lib/places-generator";
 import { fetchWalkingRoute } from "./lib/routing";
-import { FACTOR_LABEL, preferenceFromChoices } from "./lib/heana-ranking";
-import { DEFAULT_PREFERENCE, type SurveyAnswers, type SurveyChoice, type SurveyFactor, type UserPreference } from "./lib/heana-types";
 import {
-  apiEnabled,
+  apiEnabled, 
   fetchHistory as apiFetchHistory,
   fetchPlaces as apiFetchPlaces,
   fetchReviews as apiFetchReviews,
   fetchSaves as apiFetchSaves,
   getApiUser,
+
   health as apiHealth,
   login as apiLogin,
   logoutApi,
@@ -30,13 +29,12 @@ import {
   signup as apiSignup,
   toggleSaveApi,
   contributePlace,
+
   postChat,
   scanMenuImages,
   contributeWithMenu,
   fetchPlaceInfo,
   fetchSavedPlaces,
-  fetchPreferenceApi,
-  saveSurveyApi,
   type ApiDish,
   type ApiMenuMeta,
   type ApiPlaceInfo,
@@ -59,8 +57,6 @@ import {
   toggleSave,
   addContribution,
   getContributions,
-  getGuestPref,
-  setGuestPref,
   type HistoryItem,
   type Review,
   type User,
@@ -131,14 +127,6 @@ export default function App() {
   const [emotionCtx, setEmotionCtx] = useState<EmotionContext>(null);
   const [emotionTurn, setEmotionTurn] = useState<number | undefined>(undefined);
   const [turnCount, setTurnCount] = useState(0);
-
-  const [pref, setPref] = useState<UserPreference>(DEFAULT_PREFERENCE);
-  const [surveyStage, setSurveyStage] = useState<"q1" | "q2" | "q3" | null>(null);
-  const [surveyAns, setSurveyAns] = useState<{ q1: SurveyChoice; q2: SurveyChoice | null }>({
-    q1: "any",
-    q2: null,
-  });
-  const askedFor = useRef<string | null>(null);
 
   const loadFromApi = useCallback(async () => {
     if (!useApi) return;
@@ -247,8 +235,8 @@ export default function App() {
         meters: Math.round(haversine(origin.lat, origin.lng, p.lat, p.lng)),
       }))
       .filter((p) => p.campus === campus)
-      .filter((p) => p.price_min <= budget)
-      .filter((p) => p.meters <= radius)
+      .filter((p) => p.price_min <= budget*1.1)
+      .filter((p) => p.meters <= radius*1.2)
       .filter((p) => !onlySaved || saved.includes(p.id))
       .sort((a, b) => a.meters - b.meters);
   }, [places, campus, budget, radius, onlySaved, saved]);
@@ -313,31 +301,6 @@ export default function App() {
       .catch(() => setSavedApi([]));
   }, [useApi, user, saved]);
 
-  useEffect(() => {
-  let cancelled = false;
-  const key = user?.id ?? "guest";
-  const autoAsk = () => {
-    if (askedFor.current === key) return;   // tránh hỏi 2 lần (StrictMode)
-    askedFor.current = key;
-    startSurvey(true);
-  };
-  (async () => {
-    if (user && useApi) {
-      try {
-        const p = await fetchPreferenceApi();
-        if (cancelled) return;
-        setPref(p);
-        if (!p.survey_done) autoAsk();
-      } catch { /* token hết hạn */ }
-    } else {
-      const g = getGuestPref();
-      setPref(g ?? DEFAULT_PREFERENCE);
-      if (!g) autoAsk();
-    }
-  })();
-  return () => { cancelled = true; };
-}, [user, useApi]);
-
   const savedPlaces: SavedPlace[] = useApi
     ? savedApi.map((p) => ({ ...p, campus: p.campus as CampusId }))
     : places.filter((p) => saved.includes(p.id)).map((p) => ({ ...p, dishes: [] }));
@@ -391,11 +354,6 @@ export default function App() {
   async function sendChat(text: string) {
   const clean = text.trim();
   if (!clean) return;
-
-  if (surveyStage === "q3") {
-    void finishSurvey(clean);
-    return;
-  }
 
   setTurns(t => [
     ...t,
@@ -566,104 +524,6 @@ export default function App() {
     }
   }
 
-  async function submitSurvey(a: SurveyAnswers) {
-    if (user && useApi) {
-      setPref(await saveSurveyApi(a));                // server tính + lưu MySQL
-    } else {
-      const p = preferenceFromChoices(a);             // khách: không gọi API
-      setGuestPref(p);
-      setPref(p);
-    }
-    
-  }
-
-  const Q1_CHOICES = [
-    { label: FACTOR_LABEL.price, value: "price" },
-    { label: FACTOR_LABEL.distance, value: "distance" },
-    { label: FACTOR_LABEL.quality, value: "quality" },
-    { label: "Sao cũng được", value: "any" },
-  ];
-
-  const ASK_ALLERGY =
-    'Câu 3: Cảm ơn bạn! Bạn có thành phần nào khiến bạn dị ứng hoặc khó chịu khi ăn không? Gõ vào ô chat bên dưới (cách nhau bằng dấu phẩy), hoặc gõ "không" nếu không có.';
-
-  function startSurvey(first: boolean) {
-    setSurveyStage("q1");
-    setSurveyAns({ q1: "any", q2: null });
-    setScreen("chat");
-    const intro = first
-      ? "Chào bạn mới! Trước khi chúng ta bắt đầu việc lựa chọn quán, bạn hãy thực hiện bài khảo sát này để giúp mình tìm quán phù hợp với bạn nhất! (Bạn có thể thực hiện lại bất kỳ lúc nào bạn muốn)\n\n"
-      : "";
-    setTurns((t) => [
-      ...t,
-      {
-        role: "bot",
-        text: `${intro}Câu 1: Bạn muốn kết quả tìm kiếm ưu tiên yếu tố nào nhất?`,
-        choices: Q1_CHOICES,
-      },
-    ]);
-  }
-
-  function pickChoice(value: string, label: string) {
-    if (surveyStage === "q1") {
-      const q1 = value as SurveyChoice;
-      setSurveyAns({ q1, q2: null });
-      if (q1 === "any") {
-        setSurveyStage("q3");
-        setTurns((t) => [...t, { role: "user", text: label }, { role: "bot", text: ASK_ALLERGY }]);
-      } else {
-        setSurveyStage("q2");
-        const others = (["price", "distance", "quality"] as SurveyFactor[]).filter((f) => f !== q1);
-        setTurns((t) => [
-          ...t,
-          { role: "user", text: label },
-          {
-            role: "bot",
-            text: "Câu 2: Hãy chọn yếu tố phụ để mình đưa ra lựa chọn tốt hơn cho bạn",
-            choices: [
-              ...others.map((f) => ({ label: FACTOR_LABEL[f], value: f })),
-              { label: "Sao cũng được", value: "any" },
-            ],
-          },
-        ]);
-      }
-    } else if (surveyStage === "q2") {
-      setSurveyAns((a) => ({ ...a, q2: value as SurveyChoice }));
-      setSurveyStage("q3");
-      setTurns((t) => [...t, { role: "user", text: label }, { role: "bot", text: ASK_ALLERGY }]);
-    }
-  }
-
-  async function finishSurvey(text: string) {
-    const none = /^(không|khong|ko|no|k)$/i.test(text.trim());
-    const answers: SurveyAnswers = {
-      q1: surveyAns.q1,
-      q2: surveyAns.q1 === "any" ? null : surveyAns.q2 ?? "any",
-      allergies_text: none ? "" : text,
-    };
-    setTurns((t) => [...t, { role: "user", text }]);
-    setDraft("");
-    try {
-      await submitSurvey(answers);
-      setSurveyStage(null);
-      setTurns((t) => [
-        ...t,
-        {
-          role: "bot",
-          text: "Vậy là chúng ta đã sẵn sàng bắt đầu rồi! Bạn có thể làm lại bài khảo sát (menu ☰ → Khảo sát) để thay đổi cách mình tìm kiếm, hoặc nói thẳng với mình trong đoạn chat nhé.",
-        },
-      ]);
-    } catch (e) {
-      setTurns((t) => [
-        ...t,
-        {
-          role: "bot",
-          text: `Không lưu được khảo sát: ${e instanceof Error ? e.message : "lỗi"}. Bạn gõ lại dị ứng để thử lần nữa.`,
-        },
-      ]);
-    }
-  }
-
   async function submitContribution(e: React.FormEvent) {
     e.preventDefault();
     if (!user) {
@@ -814,8 +674,6 @@ export default function App() {
               setTab(to);
               setScreen("classic");
             }}
-            onSurvey={() => startSurvey(false)}
-            onChoice={pickChoice}
           />
         </div>
         {screen === "place" && active && (

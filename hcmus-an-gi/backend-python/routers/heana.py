@@ -25,15 +25,11 @@ from models.schemas import (
     SearchRequest,
     SearchResponse,
     ExtractedIntent,
-    SurveyAnswers,
 )
-from services.ingredient_names import canonical_ingredients
-from services.ingredient_catalog import resolve_names
 from services.ranking import UserPreference
 from services.search_service import (
     candidate_to_dict,
     preference_from_survey,
-    preference_from_choices,
     run_search,
 )
 from services.alley_routing import (
@@ -82,11 +78,7 @@ def fetch_dishes(place_ids: list[int]) -> list[dict]:
     conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
     placeholders = ",".join(["%s"] * len(place_ids))
-    cur.execute(
-        f"SELECT id, place_id, name, price, ingredients FROM dishes "
-        f"WHERE place_id IN ({placeholders}) AND is_available=1 AND price > 0",
-        place_ids,
-    )
+    cur.execute(f"SELECT * FROM dishes WHERE place_id IN ({placeholders}) AND is_available=1", place_ids)
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -121,12 +113,10 @@ def fetch_user_preference(user_id: str) -> UserPreference:
         w_quality=float(row["w_quality"]),
         w_freshness=float(row["w_freshness"]),
         allergies=list(allergies),
-        survey_done=bool(row.get("survey_done")),
     )
 
 
 def save_user_preference(user_id: str, pref: UserPreference, survey_done: bool = True):
-    pref.allergies = canonical_ingredients(pref.allergies, resolve_names(pref.allergies))
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
@@ -205,13 +195,18 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> Optional
 
 @router.post("/onboarding", response_model=PreferenceOut)
 def submit_onboarding(
-    body: SurveyAnswers,
+    body: OnboardingSurvey,
     user_id: Optional[str] = Depends(get_current_user_id),
 ):
-    """Chỉ user đăng nhập mới lưu DB. Khách tính trọng số ở frontend."""
+    """Spec 1.1 - Khảo sát sở thích ngay sau khi tạo tài khoản."""
     if not user_id:
         raise HTTPException(401, "Cần đăng nhập để lưu preference.")
-    pref = preference_from_choices(body.q1, body.q2, body.allergies_text)
+    pref = preference_from_survey(
+        price_importance=body.price_importance,
+        distance_importance=body.distance_importance,
+        quality_importance=body.quality_importance,
+        allergies_text=body.allergies_text,
+    )
     save_user_preference(user_id, pref, survey_done=True)
     return PreferenceOut(
         w_price=pref.w_price,
@@ -234,7 +229,7 @@ def get_preferences(user_id: Optional[str] = Depends(get_current_user_id)):
         w_quality=pref.w_quality,
         w_freshness=pref.w_freshness,
         allergies=pref.allergies,
-        survey_done=pref.survey_done,
+        survey_done=True,
     )
 
 
@@ -284,13 +279,6 @@ def search_places(
     place_rows = fetch_places(body.campus)
     place_ids = [p["id"] for p in place_rows]
     dish_rows = fetch_dishes(place_ids)
-
-    if pref.allergies:
-        labels = pref.allergies + [name for dish in dish_rows for name in dish["ingredients"] or []]
-        catalog = resolve_names(labels, learn=False)
-        pref.allergies = canonical_ingredients(pref.allergies, catalog)
-        for dish in dish_rows:
-            dish["ingredients"] = canonical_ingredients(dish["ingredients"] or [], catalog)
 
     ranked, relaxation = run_search(
         place_rows=place_rows,

@@ -5,8 +5,6 @@ Compliant with Problem Specification sections 1.4 & PAT-01 / PAT-02
 
 from __future__ import annotations
 
-from services.ingredient_names import normalize_ingredient
-
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, time, date
@@ -24,7 +22,6 @@ class UserPreference:
     w_quality: float = 0.30
     w_freshness: float = 0.10
     allergies: list[str] = field(default_factory=list)
-    survey_done: bool = False
 
     def normalized_weights(self) -> tuple[float, float, float, float]:
         total = self.w_price + self.w_distance + self.w_quality + self.w_freshness
@@ -89,6 +86,11 @@ def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     dlambda = math.radians(lng2 - lng1)
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     return 2 * R * math.asin(min(1.0, math.sqrt(a)))
+
+
+def normalize_ingredient(s: str) -> str:
+    """Chuẩn hóa tên thành phần để so khớp dị ứng."""
+    return s.strip().lower()
 
 
 def has_allergy_conflict(ingredients: list[str], allergies: list[str]) -> bool:
@@ -308,9 +310,12 @@ def rank_places(
         preference=preference,
         user_lat=user_lat,
         user_lng=user_lng,
-        max_radius_m=max_radius_m,
+        max_radius_m=max_radius_m, 
+
     )
     return scored[:top_k]
+
+
 
 
 # ------------------------------------------------------------

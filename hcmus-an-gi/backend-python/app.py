@@ -21,8 +21,7 @@ from pathlib import Path
 
 import mysql.connector
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 import bcrypt
@@ -46,9 +45,6 @@ from input_understanding.context import merge_context
 from input_understanding.normalizer import normalize_budget, normalize_budget_text
 from input_understanding.config import DEFAULT_BUDGET, DEFAULT_RADIUS_M
 from input_understanding.food import slugify_food, extract_search_keywords, fallback_extract_food
-from services.ingredient_catalog import resolve_names
-from services.ingredient_names import canonical_ingredients
-from services.ingredient_analyzer import analyze_dishes_background, analyze_missing_batch
 
 load_dotenv()
 
@@ -233,12 +229,17 @@ def _parse_ings(v) -> list[str]:
             v = json.loads(v)
         except ValueError:
             return []
-    return canonical_ingredients([str(x) for x in v]) if isinstance(v, list) else []
+    return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
 
 
 def _clean_ings(items) -> list[str]:
-    return canonical_ingredients([str(x).strip()[:60] for x in items or []])[:20]
-
+    seen, out = set(), []
+    for x in items or []:
+        s = str(x).strip().lower()[:60]
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:20]
 
 def fetch_menu(cur, place_ids):
     """Load menu rows from the canonical dishes table."""
@@ -412,8 +413,12 @@ def list_places(
     for p in rows:
         lat, lng = float(p["lat"]), float(p["lng"])
         meters = haversine(origin["lat"], origin["lng"], lat, lng)
-        if meters > radius_m:
+
+        relaxed_radius = radius_m * 1.20
+        if meters > relaxed_radius:
             continue
+
+    
         out.append(
             {
                 "id": p["id"],
@@ -421,7 +426,7 @@ def list_places(
                 "campus": p["campus"],
                 "lat": lat,
                 "lng": lng,
-                "price_min": int(p["price_min"]),
+                "price_min": int(p["price_min"]), 
                 "price_max": int(p["price_max"]),
                 "cuisine": p["cuisine"],
                 "address": p["address"],
@@ -1006,7 +1011,6 @@ class ContributeWithMenuIn(BaseModel):
 def contribute_with_menu(
     body: ContributeWithMenuIn,
     request: Request,
-    background_tasks: BackgroundTasks,
     user: dict = Depends(current_user),
 ):
     """Tao quan + luu danh sach mon (sau khi user xac nhan ket qua OCR)."""
@@ -1043,8 +1047,6 @@ def contribute_with_menu(
             if cur.fetchone():
                 raise HTTPException(409, "Quan da ton tai (trung ten + co so).")
 
-            menu_names = [name for dish in body.dishes[:150] for name in _clean_ings(dish.ingredients)]
-            catalog = resolve_names(menu_names)
             note = (body.note or "").strip()
             address = body.address.strip()
             if note:
@@ -1060,9 +1062,7 @@ def contribute_with_menu(
             )
             place_id = cur.lastrowid
 
-            dish_ids = []
             for d in body.dishes[:150]:
-                ingredients = canonical_ingredients(_clean_ings(d.ingredients), catalog)
                 cur.execute(
                     "INSERT INTO dishes (place_id, name, price, ingredients, description, image_url) "
                     "VALUES (%s,%s,%s,%s,%s,%s)",
@@ -1070,21 +1070,16 @@ def contribute_with_menu(
                         place_id,
                         d.name.strip()[:180],
                         d.price if d.price is not None else 0,
-                        json.dumps(ingredients, ensure_ascii=False),
+                        json.dumps(_clean_ings(d.ingredients), ensure_ascii=False),
                         (d.note or d.category or "").strip()[:300] or None,
                         None,
                     ),
                 )
-                if not ingredients:
-                    dish_ids.append(cur.lastrowid)
             mm = body.menu_meta
             if mm and mm.hours:
                 cur.execute("UPDATE places SET hours_text = %s WHERE id = %s", (mm.hours.strip()[:80], place_id))
             conn.commit()
             record_contribute(user["id"], ip or "unknown")
-            if dish_ids:
-                # Gemini work runs after the response, so menu submission remains quick.
-                background_tasks.add_task(analyze_dishes_background, dish_ids)
             return {
                 "ok": True,
                 "id": place_id,
@@ -1101,28 +1096,6 @@ def contribute_with_menu(
             conn.close()
     finally:
         queue_leave()
-
-
-@app.post("/dishes/analyze-missing")
-def analyze_missing_dish_ingredients(
-    limit: int = 20,
-    user: dict = Depends(current_user),
-):
-    """Analyze a small batch of existing dishes with no saved ingredient list."""
-    if not 1 <= limit <= 50:
-        raise HTTPException(400, "limit phai nam trong khoang 1-50")
-    try:
-        results = analyze_missing_batch(limit)
-    except Exception as exc:
-        raise HTTPException(503, f"Khong the phan tich thanh phan mon an: {exc}") from exc
-    return JSONResponse(
-        content={
-            "processed": len(results),
-            "analyzed": sum(1 for item in results if item["status"] == "analyzed"),
-            "results": results,
-        },
-        media_type="application/json; charset=utf-8",
-    )
 
 
 @app.get("/places/saved")
