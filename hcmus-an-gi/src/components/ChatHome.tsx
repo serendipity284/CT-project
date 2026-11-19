@@ -22,7 +22,11 @@ type Props = {
   onLogout: () => void;
   onNavigate: (to: NavTarget) => void;
   onSurvey: () => void;
-  onChoice: (value: string, label: string) => void;
+    onChoice: (value: string, label: string) => void;
+    /** nút 🎲 chính: khảo sát trước rồi mới random */
+    onSuggest: () => void;
+    /** "Random lại": bốc lô 15 quán khác, giữ nguyên khảo sát vừa làm */
+    onReroll: () => void;
 };
 
 /** Logo bot: nắp cloche + muỗng + nĩa (giống mockup). */
@@ -67,7 +71,7 @@ function Star() {
 }
 
 export function ChatHome({
-  userName, results, ratings, onOpenPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate, onSurvey, onChoice,
+    userName, results, ratings, onOpenPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate, onSurvey, onChoice, onSuggest, onReroll
 }: Props) {
   const [open, setOpen] = useState(false);
   // popup bên phải danh sách: quán đang chọn + vị trí dọc (px, tính từ đầu khung danh sách)
@@ -144,6 +148,12 @@ export function ChatHome({
             {turns.map((t, i) => {
               if (i === 0) return null; // lời chào đã hiện ở trên
               const isLastList = t.list && i === turns.map((x) => !!x.list).lastIndexOf(true);
+              // lượt random: hiện đúng các quán đã bốc (theo thứ tự bốc); lượt thường: top 5 theo kết quả lọc
+              const shown: ResultPlace[] = t.picks
+                ? t.picks
+                    .map((id) => results.find((p) => p.id === id))
+                    .filter((p): p is ResultPlace => !!p)
+                : results.slice(0, 5);
               return (
                 <div key={i} className="hx-block">
                   <div className={t.role === "bot" ? "hx-row bot" : "hx-row me"}>
@@ -159,15 +169,22 @@ export function ChatHome({
                       ))}
                     </div>
                   )}
+                      {t.suggestion && i === turns.length - 1 && (
+                          <div className="hx-choices">
+                              <button type="button" onClick={() => onOpenPlace(t.suggestion!.id, "detail")}>Chi tiết</button>
+                              <button type="button" onClick={() => onOpenPlace(t.suggestion!.id, "route")}>Chỉ đường</button>
+                              <button type="button" onClick={onReroll}>🎲 Random lại</button>
+                          </div>
+                      )}
                   {isLastList && (
                     <div className="hx-results-wrap" ref={wrapRef}>
                       <div className="hx-results" onScroll={(e) => {
                           if (Math.abs(e.currentTarget.scrollTop - popScroll.current) > 4) setPop(null);
                         }}>
-                        {results.length === 0 && (
+                        {shown.length === 0 && (
                           <p className="hx-empty">Không có quán khớp. Hãy thử tăng ngân sách hoặc khoảng cách.</p>
                         )}
-                        {results.slice(0, 15).map((p) => {
+                        {shown.map((p) => {
                           const r = ratings[p.id];
                           return (
                             <button
@@ -192,6 +209,11 @@ export function ChatHome({
                           );
                         })}
                       </div>
+                      {t.picks && i === turns.length - 1 && (
+                        <div className="hx-choices">
+                          <button type="button" onClick={onReroll}>🎲 Random lại 5 quán khác</button>
+                        </div>
+                      )}
                       {pop && (
                         <div className="hx-pop" style={{ top: pop.top }} role="dialog">
                           <button type="button" className="primary"
@@ -211,6 +233,10 @@ export function ChatHome({
             })}
             <div ref={endRef} />
           </div>
+
+                  <div className="hx-choices">
+                      <button type="button" onClick={() => onSuggest()}>🎲 Gợi ý ngẫu nhiên cho tôi</button>
+                  </div>
 
           <form
             className="hx-composer"
