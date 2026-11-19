@@ -44,7 +44,7 @@ function explain(
 }
 
 /**
- * Bốc ngẫu nhiên `count` quán (mặc định 15), KHÔNG trùng nhau trong cùng một lượt.
+ * Bốc ngẫu nhiên `count` quán (mặc định 5), KHÔNG trùng nhau trong cùng một lượt.
  * Mỗi lượt bốc dùng softmax trên các quán còn lại (roulette wheel), nên quán điểm cao
  * thường nằm đầu danh sách nhưng quán điểm thấp vẫn có cơ hội lọt vào.
  * Ưu tiên quán chưa gợi ý (excludeIds); nếu không đủ `count` thì bù thêm từ các quán đã gợi ý.
