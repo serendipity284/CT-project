@@ -22,6 +22,7 @@ class UserPreference:
     w_quality: float = 0.30
     w_freshness: float = 0.10
     allergies: list[str] = field(default_factory=list)
+    survey_done: bool = False
 
     def normalized_weights(self) -> tuple[float, float, float, float]:
         total = self.w_price + self.w_distance + self.w_quality + self.w_freshness

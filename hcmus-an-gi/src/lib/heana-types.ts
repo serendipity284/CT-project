@@ -81,3 +81,11 @@ export const DEFAULT_PREFERENCE: UserPreference = {
   allergies: [],
   survey_done: false,
 };
+
+export type SurveyFactor = "price" | "distance" | "quality";
+export type SurveyChoice = SurveyFactor | "any";
+export interface SurveyAnswers {
+  q1: SurveyChoice;
+  q2?: SurveyChoice | null;
+  allergies_text: string;
+}

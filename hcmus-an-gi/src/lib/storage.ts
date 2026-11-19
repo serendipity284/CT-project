@@ -31,6 +31,7 @@ const K = {
   reviews: "hcmus_reviews",
   users: "hcmus_users_db",
   contributions: "hcmus_contributions",
+  guestPref: "hcmus_guest_pref",
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -177,4 +178,13 @@ export function addContribution(
   list.unshift(row);
   write(K.contributions, list);
   return list;
+}
+
+import type { UserPreference } from "./heana-types";
+
+export function getGuestPref(): UserPreference | null {
+  return read<UserPreference | null>(K.guestPref, null);
+}
+export function setGuestPref(p: UserPreference) {
+  write(K.guestPref, p);
 }

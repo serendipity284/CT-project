@@ -11,6 +11,7 @@ export type ChatTurn = {
   text: string;
   /** true = sau bong bóng này hiện danh sách quán ngay trong khung chat */
   list?: boolean;
+  choices?: { label: string; value: string }[];
 };
 
 const CAMPUS_Q5 = /quận\s*5|q\.?\s*5|nguyễn văn cừ|nvc/i;

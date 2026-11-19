@@ -380,3 +380,65 @@ textarea.field { resize: vertical; font: inherit; }
 .info-text dd { margin: 0; overflow-wrap: anywhere; }
 .menu-group { display: flex; flex-direction: column; gap: 0.25rem; }
 .menu-cat { font-style: normal; font-weight: 600; margin-top: 0.25rem; }
+.sv-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+    background: rgba(28, 25, 21, 0.55);
+}
+
+.sv-card {
+    width: 100%;
+    max-width: 30rem;
+    max-height: 90vh;
+    overflow: auto;
+    background: #fffaf3;
+    border: 1px solid #e4d8c6;
+    border-radius: 1.2rem;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    box-shadow: 0 12px 40px rgba(28, 25, 21, 0.3);
+}
+
+    .sv-card h3 {
+        margin: 0.25rem 0;
+        color: #4b3a2e;
+    }
+
+.sv-intro {
+    margin: 0;
+    color: #6f665c;
+    font-size: 0.9rem;
+}
+
+.sv-opt {
+    text-align: left;
+    border: 1px solid #e4d8c6;
+    background: #f4efe6;
+    color: #1c1915;
+    border-radius: 0.9rem;
+    padding: 0.75rem 1rem;
+    font: inherit;
+    cursor: pointer;
+}
+
+    .sv-opt:hover {
+        border-color: #85502f;
+        background: #fff1e6;
+    }
+
+.sv-link {
+    align-self: flex-start;
+    border: 0;
+    background: none;
+    color: #6f665c;
+    font: inherit;
+    text-decoration: underline;
+    padding: 0.25rem 0;
+    cursor: pointer;
+}

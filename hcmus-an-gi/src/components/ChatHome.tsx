@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Menu, MessageCircle, Search, PlusCircle, User as UserIcon, Send, X } from "lucide-react";
+import { Menu, MessageCircle, Search, PlusCircle, User as UserIcon, Send, X, ClipboardList } from "lucide-react";
 import type { ChatTurn } from "../lib/chat-intent";
 import type { Place } from "../lib/places-data";
 
@@ -21,6 +21,8 @@ type Props = {
   onLogin: () => void;
   onLogout: () => void;
   onNavigate: (to: NavTarget) => void;
+  onSurvey: () => void;
+  onChoice: (value: string, label: string) => void;
 };
 
 /** Logo bot: nắp cloche + muỗng + nĩa (giống mockup). */
@@ -65,7 +67,7 @@ function Star() {
 }
 
 export function ChatHome({
-  userName, results, ratings, onOpenPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate,
+  userName, results, ratings, onOpenPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate, onSurvey, onChoice,
 }: Props) {
   const [open, setOpen] = useState(false);
   // popup bên phải danh sách: quán đang chọn + vị trí dọc (px, tính từ đầu khung danh sách)
@@ -128,6 +130,7 @@ export function ChatHome({
               <li><button type="button" onClick={() => go("list")}><Search size={18} /> Quán &amp; bản đồ</button></li>
               <li><button type="button" onClick={() => go("contribute")}><PlusCircle size={18} /> Đóng góp</button></li>
               <li><button type="button" onClick={() => go("me")}><UserIcon size={18} /> Của tôi</button></li>
+              <li><button type="button" onClick={() => { setOpen(false); onSurvey(); }}><ClipboardList size={18} /> Khảo sát</button></li>
             </ul>
           )}
         </nav>
@@ -147,6 +150,15 @@ export function ChatHome({
                     {t.role === "bot" && <BotAvatar />}
                     <p className={t.role === "bot" ? "hx-bubble bot" : "hx-bubble me"}>{t.text}</p>
                   </div>
+                  {t.choices && i === turns.length - 1 && (
+                    <div className="hx-choices">
+                      {t.choices.map((c) => (
+                        <button key={c.value} type="button" onClick={() => onChoice(c.value, c.label)}>
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {isLastList && (
                     <div className="hx-results-wrap" ref={wrapRef}>
                       <div className="hx-results" onScroll={(e) => {

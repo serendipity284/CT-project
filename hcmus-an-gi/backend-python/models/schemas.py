@@ -33,13 +33,18 @@ class PreferenceOut(PreferenceUpdate):
     survey_done: bool = False
     updated_at: Optional[datetime] = None
 
-
 class OnboardingSurvey(BaseModel):
     """4 câu hỏi onboarding theo Spec 1.1"""
     price_importance: int = Field(..., ge=1, le=5, description="1=không quan tâm, 5=rất quan tâm giá")
     distance_importance: int = Field(..., ge=1, le=5)
     quality_importance: int = Field(..., ge=1, le=5)
     allergies_text: str = Field("", description="Các thành phần dị ứng, cách nhau bởi dấu phẩy")
+
+
+class SurveyAnswers(BaseModel):
+    q1: Literal["price", "distance", "quality", "any"]
+    q2: Optional[Literal["price", "distance", "quality", "any"]] = None
+    allergies_text: str = ""
 
 
 # ------------------------------------------------------------

@@ -1,149 +1,115 @@
-/**
- * HEANA Onboarding Survey (Spec 1.1)
- * Hiển thị ngay sau lần đăng ký đầu tiên hoặc khi user chưa làm survey.
- */
-
 import { useState } from "react";
-import type { OnboardingAnswers, UserPreference } from "../lib/heana-types";
-import { preferenceFromSurvey } from "../lib/heana-ranking";
+import type { SurveyAnswers, SurveyChoice, SurveyFactor } from "../lib/heana-types";
+import { FACTOR_LABEL } from "../lib/heana-ranking";
 
-interface Props {
-  onComplete: (pref: UserPreference) => void;
-  onSkip?: () => void;
-}
+type Props = {
+  onComplete: (a: SurveyAnswers) => Promise<void> | void;
+  onClose?: () => void;
+};
 
-const IMPORTANCE_LABELS = ["", "Không quan tâm", "Ít", "Trung bình", "Quan tâm", "Rất quan tâm"];
+type Step = "q1" | "q2" | "q3" | "done";
+const ALL: SurveyFactor[] = ["price", "distance", "quality"];
 
-export function OnboardingSurvey({ onComplete, onSkip }: Props) {
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState<OnboardingAnswers>({
-    price_importance: 3,
-    distance_importance: 3,
-    quality_importance: 3,
-    allergies_text: "",
-  });
+export function OnboardingSurvey({ onComplete, onClose }: Props) {
+  const [step, setStep] = useState<Step>("q1");
+  const [q1, setQ1] = useState<SurveyChoice>("any");
+  const [q2, setQ2] = useState<SurveyChoice | null>(null);
+  const [allergies, setAllergies] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
-  const questions = [
-    {
-      key: "price_importance" as const,
-      title: "Bạn quan tâm đến giá cả ở mức nào?",
-      subtitle: "Ngân sách sinh viên thường < 35.000đ/bữa",
-    },
-    {
-      key: "distance_importance" as const,
-      title: "Bạn quan tâm đến khoảng cách ở mức nào?",
-      subtitle: "Đi bộ gần hay chấp nhận đi xa hơn một chút?",
-    },
-    {
-      key: "quality_importance" as const,
-      title: "Bạn quan tâm đến chất lượng / rating ở mức nào?",
-      subtitle: "Điểm đánh giá và review từ người khác",
-    },
-    {
-      key: "allergies_text" as const,
-      title: "Bạn có dị ứng thành phần nào không?",
-      subtitle: 'Ví dụ: lạc, hải sản, hành tây, sữa... (để trống nếu không có)',
-      isText: true,
-    },
-  ];
+  const others = ALL.filter((f) => f !== q1);
 
-  const current = questions[step];
-  const isLast = step === questions.length - 1;
+  function pickQ1(c: SurveyChoice) {
+    setQ1(c);
+    setQ2(null);
+    setStep(c === "any" ? "q3" : "q2"); // D -> bỏ qua Q2
+  }
 
-  function handleNext() {
-    if (isLast) {
-      const pref = preferenceFromSurvey(answers);
-      onComplete(pref);
-    } else {
-      setStep((s) => s + 1);
+  async function finish() {
+    setBusy(true);
+    setError("");
+    try {
+      await onComplete({ q1, q2: q1 === "any" ? null : q2 ?? "any", allergies_text: allergies });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được khảo sát");
+      setBusy(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Thiết lập sở thích</h2>
-          <span className="text-sm text-gray-500">
-            {step + 1}/{questions.length}
-          </span>
-        </div>
-
-        {/* Progress */}
-        <div className="mb-6 h-1.5 overflow-hidden rounded-full bg-gray-100">
-          <div
-            className="h-full rounded-full bg-orange-500 transition-all"
-            style={{ width: `${((step + 1) / questions.length) * 100}%` }}
-          />
-        </div>
-
-        <h3 className="mb-1 text-base font-medium text-gray-800">{current.title}</h3>
-        <p className="mb-5 text-sm text-gray-500">{current.subtitle}</p>
-
-        {current.isText ? (
-          <textarea
-            className="mb-6 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-orange-400"
-            rows={3}
-            placeholder="lạc, hải sản, hành tây..."
-            value={answers.allergies_text}
-            onChange={(e) =>
-              setAnswers((a) => ({ ...a, allergies_text: e.target.value }))
-            }
-          />
-        ) : (
-          <div className="mb-6 flex justify-between gap-2">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() =>
-                  setAnswers((a) => ({ ...a, [current.key]: n }))
-                }
-                className={`flex h-12 w-12 flex-col items-center justify-center rounded-xl border text-sm font-medium transition ${
-                  (answers as any)[current.key] === n
-                    ? "border-orange-500 bg-orange-50 text-orange-600"
-                    : "border-gray-200 text-gray-600 hover:border-gray-300"
-                }`}
-              >
-                {n}
+    <div className="sv-overlay" role="dialog" aria-modal="true">
+      <div className="sv-card">
+        {step === "q1" && (
+          <>
+            <p className="sv-intro">
+              Chào bạn mới! Trước khi chúng ta bắt đầu việc lựa chọn quán, bạn hãy thực hiện bài
+              khảo sát này để giúp mình tìm quán phù hợp với bạn nhất! (Bạn có thể thực hiện lại
+              bất kỳ lúc nào bạn muốn)
+            </p>
+            <h3>Câu 1: Bạn muốn kết quả tìm kiếm ưu tiên yếu tố nào nhất?</h3>
+            {ALL.map((f) => (
+              <button key={f} type="button" className="sv-opt" onClick={() => pickQ1(f)}>
+                {FACTOR_LABEL[f]}
               </button>
             ))}
-          </div>
+            <button type="button" className="sv-opt" onClick={() => pickQ1("any")}>
+              Sao cũng được
+            </button>
+          </>
         )}
 
-        {!current.isText && (
-          <p className="mb-4 text-center text-xs text-gray-400">
-            {IMPORTANCE_LABELS[(answers as any)[current.key]]}
-          </p>
+        {step === "q2" && (
+          <>
+            <h3>Câu 2: Hãy chọn yếu tố phụ để mình đưa ra lựa chọn tốt hơn cho bạn</h3>
+            {others.map((f) => (
+              <button key={f} type="button" className="sv-opt"
+                onClick={() => { setQ2(f); setStep("q3"); }}>
+                {FACTOR_LABEL[f]}
+              </button>
+            ))}
+            <button type="button" className="sv-opt" onClick={() => { setQ2("any"); setStep("q3"); }}>
+              Sao cũng được
+            </button>
+            <button type="button" className="sv-link" onClick={() => setStep("q1")}>← Quay lại</button>
+          </>
         )}
 
-        <div className="flex gap-3">
-          {onSkip && step === 0 && (
-            <button
-              type="button"
-              onClick={onSkip}
-              className="flex-1 rounded-xl border border-gray-200 py-2.5 text-sm font-medium text-gray-600"
-            >
-              Bỏ qua
+        {step === "q3" && (
+          <>
+            <h3>
+              Câu 3: Cảm ơn bạn! Bạn có thành phần nào khiến bạn dị ứng hoặc khó chịu khi ăn không?
+            </h3>
+            <textarea className="field" rows={3} value={allergies}
+              placeholder="Ví dụ: lạc, hải sản, hành (cách nhau bằng dấu phẩy, để trống nếu không có)"
+              onChange={(e) => setAllergies(e.target.value)} />
+            <div className="row">
+              <button type="button" className="chip"
+                onClick={() => setStep(q1 === "any" ? "q1" : "q2")}>← Quay lại</button>
+              <button type="button" className="btn-primary grow" onClick={() => setStep("done")}>
+                Tiếp tục
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === "done" && (
+          <>
+            <h3>Vậy là chúng ta đã sẵn sàng bắt đầu rồi!</h3>
+            <p className="muted">
+              Bạn có thể làm lại bài khảo sát để thay đổi cách mình tìm kiếm, hoặc nói thẳng với
+              mình trong đoạn chat nhé.
+            </p>
+            {error && <p className="error">{error}</p>}
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => void finish()}>
+              {busy ? "Đang lưu…" : "Bắt đầu"}
             </button>
-          )}
-          {step > 0 && (
-            <button
-              type="button"
-              onClick={() => setStep((s) => s - 1)}
-              className="flex-1 rounded-xl border border-gray-200 py-2.5 text-sm font-medium text-gray-600"
-            >
-              Quay lại
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleNext}
-            className="flex-1 rounded-xl bg-orange-500 py-2.5 text-sm font-medium text-white hover:bg-orange-600"
-          >
-            {isLast ? "Hoàn tất" : "Tiếp tục"}
-          </button>
-        </div>
+          </>
+        )}
+
+        {onClose && step !== "done" && (
+          <button type="button" className="sv-link" onClick={onClose}>Bỏ qua lúc này</button>
+        )}
       </div>
     </div>
   );
