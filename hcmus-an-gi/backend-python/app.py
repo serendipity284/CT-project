@@ -373,9 +373,9 @@ def login(body: LoginIn):
 
 @app.get("/places")
 def list_places(
-    campus: str = "q5",
-    budget: int = DEFAULT_BUDGET,
-    radius_m: int = DEFAULT_RADIUS_M,
+   campus: str = "q5",
+    budget: Optional[int] = None,
+    radius_m: Optional[int] = None,
     food: Optional[str] = None,
     cuisine: Optional[str] = None,
 ):
@@ -412,7 +412,7 @@ def list_places(
     for p in rows:
         lat, lng = float(p["lat"]), float(p["lng"])
         meters = haversine(origin["lat"], origin["lng"], lat, lng)
-        if meters > radius_m:
+        if radius_m is not None and meters > radius_m:
             continue
         out.append(
             {

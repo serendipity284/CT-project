@@ -81,7 +81,24 @@ export const DEFAULT_PREFERENCE: UserPreference = {
   allergies: [],
   survey_done: false,
 };
+export interface DishPreview {
+  name: string;
+  price: number;
+}
 
+// Bổ sung các trường tùy chọn (nếu chưa có) vào type Place / Eatery hiện tại của bạn:
+export interface Place {
+  id: number | string;
+  name: string;
+  address?: string;
+  price_min?: number;
+  price_max?: number;
+  distance_m?: number;
+  // Các trường sẽ bổ sung dữ liệu sau (dùng dấu ? để không lỗi khi DB thiếu)
+  rating?: number | null;
+  image_url?: string | null;
+  dishes?: DishPreview[];
+}
 export type SurveyFactor = "price" | "distance" | "quality";
 export type SurveyChoice = SurveyFactor | "any";
 export interface SurveyAnswers {

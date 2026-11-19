@@ -72,9 +72,22 @@ import { CampusMap } from "./components/CampusMap";
 import { ChatHome, type NavTarget } from "./components/ChatHome";
 import { PlacePage, type PlaceMode } from "./components/PlacePage";
 
+// import { PlaceListView } from "./components/PlaceListView";
+
 type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
 type MenuFile = { file: File; url: string };
 type ScanMeta = { phone: string; hours: string; notes: string };
+type SortKey = "near" | "price_asc" | "price_desc";
+
+/** Bỏ dấu tiếng Việt + chữ thường để so khớp tìm kiếm ("pho" khớp "Phở"). */
+function normalizeText(s: string) {
+  return s
+    .toLowerCase()
+    .replace(/đ/g, "d")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
 
 export default function App() {
     const [suggestedIds, setSuggestedIds] = useState<number[]>([]);
@@ -90,6 +103,10 @@ export default function App() {
   const [budget, setBudget] = useState(50000);
   const [radius, setRadius] = useState(800);
   const [onlySaved, setOnlySaved] = useState(false);
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<SortKey>("near");
+  // false = hiện tất cả quán của cơ sở; true = áp dụng lọc ngân sách + khoảng cách
+  const [useLimits, setUseLimits] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [tab, setTab] = useState<"list" | "chat" | "me" | "contribute">("list");
   const [intent, setIntent] = useState<Intent>({});
@@ -152,7 +169,7 @@ export default function App() {
     try {
       const h = await apiHealth();
       setMysqlOk(h.mysql);
-      const list = await apiFetchPlaces(campus, budget, radius);
+      const list = await apiFetchPlaces(campus);
       setPlaces(
         list.map((p) => ({
           id: p.id,
@@ -183,7 +200,7 @@ export default function App() {
       setMysqlOk(false);
       setApiError(e instanceof Error ? e.message : "Không gọi được API");
     }
-  }, [useApi, campus, budget, radius]);
+  }, [useApi, campus]);
 
   useEffect(() => {
     if (useApi) {
@@ -247,17 +264,33 @@ export default function App() {
 
   const ranked = useMemo(() => {
     const origin = CAMPUSES[campus];
-    return places
+    const tokens = normalizeText(query).split(/\s+/).filter(Boolean);
+
+    const list = places
       .map((p) => ({
         ...p,
         meters: Math.round(haversine(origin.lat, origin.lng, p.lat, p.lng)),
       }))
-      .filter((p) => p.campus === campus)
-      .filter((p) => p.price_min <= budget)
-      .filter((p) => p.meters <= radius)
+      
+      
       .filter((p) => !onlySaved || saved.includes(p.id))
-      .sort((a, b) => a.meters - b.meters);
-  }, [places, campus, budget, radius, onlySaved, saved]);
+      .filter((p) => {
+        if (!tokens.length) return true;
+        const hay = normalizeText(`${p.name} ${p.cuisine} ${p.address}`);
+        return tokens.every((t) => hay.includes(t)); // mọi từ khóa đều phải khớp
+      });
+
+    const priceKnown = (p: { price_max: number }) => p.price_max > 0;
+    list.sort((a, b) => {
+      if (sortBy === "near") return a.meters - b.meters;
+      // quán "Chưa rõ giá" luôn xuống cuối khi sắp theo giá
+      if (priceKnown(a) !== priceKnown(b)) return priceKnown(a) ? -1 : 1;
+      const diff =
+        sortBy === "price_asc" ? a.price_min - b.price_min : b.price_max - a.price_max;
+      return diff || a.meters - b.meters; // bằng giá thì quán gần hơn lên trước
+    });
+    return list;
+  }, [places, campus, budget, radius, onlySaved, saved, query, sortBy, useLimits]);
 
   const active: (Place & { meters: number }) | null =
     ranked.find((p) => p.id === activeId) ?? ranked[0] ?? null;
@@ -392,6 +425,7 @@ export default function App() {
     if (next.campus) setCampus(next.campus);
     if (next.budget) setBudget(next.budget);
     if (next.radiusM) setRadius(next.radiusM);
+    setUseLimits(true); // chat đã chốt ngân sách/khoảng cách → áp dụng lọc
   }
     //recommend random 
     // opts.pref: dùng khảo sát vừa làm xong (state `pref` chưa kịp cập nhật trong cùng lượt render)
@@ -952,118 +986,137 @@ export default function App() {
       {apiError && <p className="error">{apiError}</p>}
       {regenMsg && <p className="muted">{regenMsg}</p>}
 
-      <div className="campus-row">
-        {(Object.keys(CAMPUSES) as CampusId[]).map((id) => (
-          <button
-            key={id}
-            type="button"
-            className={campus === id ? "chip is-on" : "chip"}
-            onClick={() => {
-              setCampus(id);
-              setActiveId(null);
-            }}
-          >
-            {CAMPUSES[id].short}
-          </button>
-        ))}
-        <a className="chip" href="/hcmus-mysql.sql" download>
-          Schema MySQL
-        </a>
-      </div>
-
-      <section className="filters">
-        <label>
-          Ngân sách tối đa
-          <div className="row wrap">
-            {BUDGET_PRESETS.map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={budget === n ? "chip is-on" : "chip"}
-                onClick={() => setBudget(n)}
-              >
-                {vnd(n)}
-              </button>
-            ))}
-            <input
-              className="field tiny"
-              type="number"
-              min={10000}
-              step={5000}
-              value={budget}
-              onChange={(e) => setBudget(Number(e.target.value) || 0)}
-            />
-          </div>
-        </label>
-        <label>
-          Khoảng cách đi bộ
-          <div className="row wrap">
-            {RADIUS_PRESETS.map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={radius === n ? "chip is-on" : "chip"}
-                onClick={() => setRadius(n)}
-              >
-                {n >= 1000 ? `${n / 1000}km` : `${n}m`}
-              </button>
-            ))}
-            <input
-              className="field tiny"
-              type="number"
-              min={100}
-              step={100}
-              value={radius}
-              onChange={(e) => setRadius(Number(e.target.value) || 0)}
-            />
-          </div>
-        </label>
-      </section>
-
-      <div className="stage">
-        <aside className="panel">
-          <div className="tabs">
-            {(["list", "chat", "contribute", "me"] as const).map((id) => (
-              <button
-                key={id}
-                type="button"
-                className={tab === id ? "tab is-on" : "tab"}
-                onClick={() => setTab(id)}
-              >
-                {id === "list"
-                  ? "Quán"
-                  : id === "chat"
-                    ? "Hỏi trợ lý"
-                    : id === "contribute"
-                      ? "Đóng góp"
-                      : "Của tôi"}
-              </button>
-            ))}
-          </div>
-
+      {/* BỐ CỤC MỚI: CỘT TRÁI NỘI DUNG CHÍNH - CỘT PHẢI THANH DANH MỤC (KHÔNG MAP, KHÔNG LỌC KHU VỰC) */}
+      <div className="stage-no-map">
+        {/* CỘT TRÁI: NỘI DUNG CHÍNH */}
+        <main className="main-content-panel">
           {tab === "list" && (
-            <div className="stack">
-              <p className="muted">
-                {ranked.length} quán · ≤ {vnd(budget)} · trong {radius}m
-              </p>
-              {ranked.map((p) => (
+            <div className="ds-quan-container">
+              {/* Hàng trên cùng: Ô Tìm kiếm + Nút Thêm mới quán ăn */}
+              <div className="ds-quan-toolbar">
+                <input
+                  className="field grow"
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Tìm tên quán, món, địa chỉ…"
+                  aria-label="Tìm quán"
+                />
                 <button
-                  key={p.id}
                   type="button"
-                  className={active?.id === p.id ? "card is-on" : "card"}
-                  onClick={() => setActiveId(p.id)}
+                  className="btn-primary"
+                  onClick={() => setTab("contribute")}
                 >
-                  <strong>{p.name}</strong>
-                  <span>
-                    {p.cuisine} · {priceText(p)}
-                  </span>
-                  <span>
-                    {p.meters}m · {walkMinutes(p.meters)} phút · {p.hours}
-                  </span>
+                  + Thêm mới quán ăn
                 </button>
-              ))}
+              </div>
+
+              {/* Thanh thông tin số lượng & Sắp xếp */}
+              <div className="ds-sort-bar">
+                <span className="muted">{ranked.length} quán</span>
+                <select
+                  className="field select"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortKey)}
+                  aria-label="Sắp xếp"
+                >
+                  <option value="near">Gần nhất</option>
+                  <option value="price_asc">Giá thấp → cao</option>
+                  <option value="price_desc">Giá cao → thấp</option>
+                </select>
+              </div>
+
+              {/* Danh sách thẻ quán chia 2 cột */}
+              <div className="ds-card-list">
+                {ranked.map((p) => {
+                  const pReviews = reviews.filter((r) => r.placeId === p.id);
+                  const ratingAvg =
+                    pReviews.length > 0
+                      ? (
+                          pReviews.reduce((sum, r) => sum + r.rating, 0) /
+                          pReviews.length
+                        ).toFixed(1)
+                      : null;
+
+                  const cleanAddress = splitAddress(p.address).address;
+                  const previewDishes = (
+                    p as Place & { dishes?: { name: string; price?: number }[] }
+                  ).dishes?.slice(0, 3);
+
+                  return (
+                    <div
+                      key={p.id}
+                      role="button"
+                      tabIndex={0}
+                      className={
+                        active?.id === p.id
+                          ? "ds-place-card is-on"
+                          : "ds-place-card"
+                      }
+                      onClick={() => setActiveId(p.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") setActiveId(p.id);
+                      }}
+                    >
+                      {/* Cột trái: Hình + Tên quán + Giá + Sao + Địa chỉ */}
+                      <div className="ds-card-left">
+                        <div className="ds-thumb">
+                          {(p as Place & { image_url?: string }).image_url ? (
+                            <img
+                              src={
+                                (p as Place & { image_url?: string }).image_url
+                              }
+                              alt={p.name}
+                            />
+                          ) : (
+                            <span className="ds-thumb-placeholder">🍜</span>
+                          )}
+                        </div>
+
+                        <div className="ds-info">
+                          <strong className="ds-place-name">{p.name}</strong>
+                          <span className="ds-place-price">{priceText(p)}</span>
+                          <span className="ds-place-meta">
+                            <span className="ds-rating">
+                              {ratingAvg ? `${ratingAvg} ★` : "Chưa có ★"}
+                            </span>
+                            {" · "}
+                            <span>Địa chỉ: {cleanAddress || "Đang cập nhật"}</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Cột phải: Món tiêu biểu + Giá */}
+                      <div className="ds-card-right">
+                        {previewDishes && previewDishes.length > 0 ? (
+                          <ul className="ds-dish-list">
+                            {previewDishes.map((d, idx) => (
+                              <li key={idx} className="ds-dish-item">
+                                <span className="ds-dish-name">{d.name}</span>
+                                <span className="ds-dish-price">
+                                  {d.price != null ? vnd(d.price) : "—"}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="ds-no-dishes">
+                            <div>Loại: {p.cuisine}</div>
+                            <div className="muted">Đang cập nhật menu...</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
               {ranked.length === 0 && (
-                <p className="muted">Không có quán khớp. Nới lọc hoặc tải lại từ MySQL.</p>
+                <p className="muted">
+                  {query.trim()
+                    ? `Không tìm thấy quán khớp "${query.trim()}".`
+                    : "Chưa có quán nào trong danh sách."}
+                </p>
               )}
             </div>
           )}
@@ -1097,7 +1150,6 @@ export default function App() {
             </div>
           )}
 
-          
           {tab === "contribute" && (
             <div className="stack">
               <h2 className="section">Đóng góp quán mới</h2>
@@ -1113,59 +1165,104 @@ export default function App() {
               <form className="stack" onSubmit={(e) => void submitContribution(e)}>
                 <label>
                   Tên quán
-                  <input className="field" required minLength={2} value={contribName}
-                    onChange={(e) => setContribName(e.target.value)} placeholder="Cơm tấm cô Năm" />
+                  <input
+                    className="field"
+                    required
+                    minLength={2}
+                    value={contribName}
+                    onChange={(e) => setContribName(e.target.value)}
+                    placeholder="Cơm tấm cô Năm"
+                  />
                 </label>
                 <label>
                   Loại món
-                  <input className="field" required value={contribCuisine}
-                    onChange={(e) => setContribCuisine(e.target.value)} />
+                  <input
+                    className="field"
+                    required
+                    value={contribCuisine}
+                    onChange={(e) => setContribCuisine(e.target.value)}
+                  />
                 </label>
                 <label>
                   Địa chỉ đầy đủ (dùng để định vị trên Google Maps)
-                  <textarea className="field" required minLength={4} rows={2} value={contribAddress}
+                  <textarea
+                    className="field"
+                    required
+                    minLength={4}
+                    rows={2}
+                    value={contribAddress}
                     onChange={(e) => setContribAddress(e.target.value)}
-                    placeholder="VD: 227 Nguyễn Văn Cừ, Phường 4, Quận 5" />
+                    placeholder="VD: 227 Nguyễn Văn Cừ, Phường 4, Quận 5"
+                  />
                 </label>
                 {useApi && (
                   <label>
                     Link Google Maps (tùy chọn, để vị trí chính xác hơn)
-                    <input className="field" type="url" value={contribMapsUrl}
+                    <input
+                      className="field"
+                      type="url"
+                      value={contribMapsUrl}
                       onChange={(e) => setContribMapsUrl(e.target.value)}
-                      placeholder="Mở quán trên Google Maps → Chia sẻ → Sao chép liên kết" />
+                      placeholder="Mở quán trên Google Maps → Chia sẻ → Sao chép liên kết"
+                    />
                   </label>
                 )}
                 <label>
                   Giờ mở
-                  <input className="field" value={contribHours}
-                    onChange={(e) => setContribHours(e.target.value)} />
+                  <input
+                    className="field"
+                    value={contribHours}
+                    onChange={(e) => setContribHours(e.target.value)}
+                  />
                 </label>
                 <div className="row wrap">
                   <label>
                     Giá từ (đ) <span className="muted">tùy chọn</span>
-                    <input className="field tiny" type="number" min={0} step={1}
+                    <input
+                      className="field tiny"
+                      type="number"
+                      min={0}
+                      step={1}
                       placeholder="AI tự tính"
-                      value={contribMin} onChange={(e) => setContribMin(e.target.value)} />
+                      value={contribMin}
+                      onChange={(e) => setContribMin(e.target.value)}
+                    />
                   </label>
                   <label>
                     Giá đến (đ) <span className="muted">tùy chọn</span>
-                    <input className="field tiny" type="number" min={0} step={1}
+                    <input
+                      className="field tiny"
+                      type="number"
+                      min={0}
+                      step={1}
                       placeholder="AI tự tính"
-                      value={contribMax} onChange={(e) => setContribMax(e.target.value)} />
+                      value={contribMax}
+                      onChange={(e) => setContribMax(e.target.value)}
+                    />
                   </label>
                 </div>
                 {!useApi && (
                   <label>
                     Cách cổng ~ (m)
-                    <input className="field" type="number" min={50} max={1500} step={50}
+                    <input
+                      className="field"
+                      type="number"
+                      min={50}
+                      max={1500}
+                      step={50}
                       value={contribOffsetM}
-                      onChange={(e) => setContribOffsetM(Number(e.target.value) || 200)} />
+                      onChange={(e) => setContribOffsetM(Number(e.target.value) || 200)}
+                    />
                   </label>
                 )}
                 <label>
                   Ghi chú
-                  <input className="field" value={contribNote}
-                    onChange={(e) => setContribNote(e.target.value)} placeholder="Món đáng thử…" />
+                  <input
+                    className="field"
+                    value={contribNote}
+                    onChange={(e) => setContribNote(e.target.value)}
+                    placeholder="Món đáng thử…"
+                  />
                 </label>
 
                 <div className="menu-scan-box">
@@ -1219,13 +1316,25 @@ export default function App() {
                   {scanMeta && (
                     <div className="stack">
                       <p className="muted">Thông tin AI đọc được (có thể sửa):</p>
-                      <input className="field" placeholder="Số điện thoại" value={scanMeta.phone}
-                        onChange={(e) => setScanMeta({ ...scanMeta, phone: e.target.value })} />
-                      <input className="field" placeholder="Giờ mở ghi trên menu" value={scanMeta.hours}
-                        onChange={(e) => setScanMeta({ ...scanMeta, hours: e.target.value })} />
-                      <textarea className="field" rows={2} placeholder="Ghi chú của quán (freeship, phụ thu…)"
+                      <input
+                        className="field"
+                        placeholder="Số điện thoại"
+                        value={scanMeta.phone}
+                        onChange={(e) => setScanMeta({ ...scanMeta, phone: e.target.value })}
+                      />
+                      <input
+                        className="field"
+                        placeholder="Giờ mở ghi trên menu"
+                        value={scanMeta.hours}
+                        onChange={(e) => setScanMeta({ ...scanMeta, hours: e.target.value })}
+                      />
+                      <textarea
+                        className="field"
+                        rows={2}
+                        placeholder="Ghi chú của quán (freeship, phụ thu…)"
                         value={scanMeta.notes}
-                        onChange={(e) => setScanMeta({ ...scanMeta, notes: e.target.value })} />
+                        onChange={(e) => setScanMeta({ ...scanMeta, notes: e.target.value })}
+                      />
                     </div>
                   )}
                   {scannedDishes.length > 0 && (
@@ -1296,9 +1405,17 @@ export default function App() {
                 </div>
 
                 {contribMsg && (
-                  <p className={
-                    /lỗi|loi|cần|nhanh|vượt|trùng|tải cao|phải|không|khong|thất bại/i.test(contribMsg) ? "error" : "muted"
-                  }>{contribMsg}</p>
+                  <p
+                    className={
+                      /lỗi|loi|cần|nhanh|vượt|trùng|tải cao|phải|không|khong|thất bại/i.test(
+                        contribMsg,
+                      )
+                        ? "error"
+                        : "muted"
+                    }
+                  >
+                    {contribMsg}
+                  </p>
                 )}
                 <button className="btn-primary" type="submit" disabled={contribBusy || !user}>
                   {contribBusy ? "Đang gửi…" : "Gửi đóng góp"}
@@ -1307,7 +1424,7 @@ export default function App() {
             </div>
           )}
 
-{tab === "me" && (
+          {tab === "me" && (
             <div className="stack">
               {!user && (
                 <>
@@ -1370,6 +1487,7 @@ export default function App() {
                         setCampus(h.campus as CampusId);
                         setBudget(h.budget);
                         setRadius(h.radiusM);
+                        setUseLimits(true);
                         setTab("list");
                       }}
                     >
@@ -1407,17 +1525,6 @@ export default function App() {
                     <Bookmark size={18} fill={saved.includes(active.id) ? "currentColor" : "none"} />
                   </button>
                 )}
-              </div>
-              <div className="route-box">
-                <strong>Chỉ đường trên bản đồ</strong>
-                {routeLoading && <p className="muted">Đang tính đường đi bộ…</p>}
-                {!routeLoading && routeMeta && (
-                  <p className="muted">
-                    Đi bộ khoảng <strong>{routeMeta.distanceM} m</strong> ·{" "}
-                    <strong>{Math.max(1, Math.round(routeMeta.durationSec / 60))} phút</strong>
-                  </p>
-                )}
-                {routeError && <p className="error">{routeError}</p>}
               </div>
               <a
                 className="chip"
@@ -1506,24 +1613,38 @@ export default function App() {
               )}
             </div>
           )}
-        </aside>
+        </main>
 
-        <div className="map-wrap">
-          <CampusMap
-            campus={campus}
-            places={ranked}
-            activeId={active?.id ?? null}
-            routeCoords={routeCoords}
-            onPick={setActiveId}
-          />
-          <p className="map-note">
-            {useApi
-              ? "Quán lấy từ MySQL qua API Python. Chỉ đường OSRM trên map."
-              : "Offline: quán mẫu trong JS. Bật MySQL + VITE_API_URL để dùng database."}
-          </p>
-        </div>
+        {/* CỘT PHẢI: THANH DANH MỤC CHUYỂN MỤC */}
+        <aside className="right-nav-sidebar">
+          <p className="nav-sidebar-title">Danh mục</p>
+          <div className="right-tabs">
+            {(["list", "chat", "contribute", "me"] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={tab === id ? "right-tab-btn is-on" : "right-tab-btn"}
+                onClick={() => {
+                  if (id === "chat") {
+                    setScreen("chat");
+                  } else {
+                    setTab(id);
+                  }
+                }}
+              >
+                {id === "list"
+                  ? "Danh sách quán"
+                  : id === "chat"
+                    ? "Khung chat trợ lý"
+                    : id === "contribute"
+                      ? "Thêm mới quán"
+                      : "Của tôi"}
+              </button>
+            ))}
+          </div>
+        </aside>
       </div>
-    </div>
+      </div>
   );
 }
 
