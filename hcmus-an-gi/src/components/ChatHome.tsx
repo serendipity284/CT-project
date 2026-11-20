@@ -153,7 +153,7 @@ export function ChatHome({
                 ? t.picks
                     .map((id) => results.find((p) => p.id === id))
                     .filter((p): p is ResultPlace => !!p)
-                : results.slice(0, 5);
+                : results.slice(0, 15);
               return (
                 <div key={i} className="hx-block">
                   <div className={t.role === "bot" ? "hx-row bot" : "hx-row me"}>

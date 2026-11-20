@@ -56,7 +56,7 @@ export function suggestRandomPlaces(
   origin: { lat: number; lng: number },
   radiusM: number,
   excludeIds: number[] = [],
-  count = 15,
+  count = 5,
   T = 0.15,
   rng = Math.random,
 ): Suggestion[] {
