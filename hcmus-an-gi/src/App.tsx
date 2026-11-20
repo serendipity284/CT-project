@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bookmark, RefreshCw, Send } from "lucide-react";
 import {
   BUDGET_PRESETS,
@@ -13,15 +13,14 @@ import { replyFor, type ChatTurn, type Intent } from "./lib/chat-intent";
 import type { Place } from "./lib/places-data";
 import { generatePlaces, initialPlaces } from "./lib/places-generator";
 import { fetchWalkingRoute } from "./lib/routing";
-import { FACTOR_LABEL, preferenceFromChoices } from "./lib/heana-ranking";
-import { DEFAULT_PREFERENCE, type SurveyAnswers, type SurveyChoice, type SurveyFactor, type UserPreference } from "./lib/heana-types";
 import {
-  apiEnabled,
+  apiEnabled, 
   fetchHistory as apiFetchHistory,
   fetchPlaces as apiFetchPlaces,
   fetchReviews as apiFetchReviews,
   fetchSaves as apiFetchSaves,
   getApiUser,
+
   health as apiHealth,
   login as apiLogin,
   logoutApi,
@@ -30,13 +29,12 @@ import {
   signup as apiSignup,
   toggleSaveApi,
   contributePlace,
+
   postChat,
   scanMenuImages,
   contributeWithMenu,
   fetchPlaceInfo,
   fetchSavedPlaces,
-  fetchPreferenceApi,
-  saveSurveyApi,
   type ApiDish,
   type ApiMenuMeta,
   type ApiPlaceInfo,
@@ -62,8 +60,6 @@ import {
   toggleSave,
   addContribution,
   getContributions,
-  getGuestPref,
-  setGuestPref,
   type HistoryItem,
   type Review,
   type User,
@@ -271,6 +267,9 @@ export default function App() {
         ...p,
         meters: Math.round(haversine(origin.lat, origin.lng, p.lat, p.lng)),
       }))
+      .filter((p) => p.campus === campus)
+      .filter((p) => p.price_min <= budget*1.1)
+      .filter((p) => p.meters <= radius*1.2)
       
       
       .filter((p) => !onlySaved || saved.includes(p.id))
@@ -351,31 +350,6 @@ export default function App() {
       .then(setSavedApi)
       .catch(() => setSavedApi([]));
   }, [useApi, user, saved]);
-
-  useEffect(() => {
-  let cancelled = false;
-  const key = user?.id ?? "guest";
-  const autoAsk = () => {
-    if (askedFor.current === key) return;   // tránh hỏi 2 lần (StrictMode)
-    askedFor.current = key;
-    startSurvey(true);
-  };
-  (async () => {
-    if (user && useApi) {
-      try {
-        const p = await fetchPreferenceApi();
-        if (cancelled) return;
-        setPref(p);
-        if (!p.survey_done) autoAsk();
-      } catch { /* token hết hạn */ }
-    } else {
-      const g = getGuestPref();
-      setPref(g ?? DEFAULT_PREFERENCE);
-      if (!g) autoAsk();
-    }
-  })();
-  return () => { cancelled = true; };
-}, [user, useApi]);
 
   const savedPlaces: SavedPlace[] = useApi
     ? savedApi.map((p) => ({ ...p, campus: p.campus as CampusId }))
@@ -472,11 +446,6 @@ export default function App() {
   async function sendChat(text: string) {
   const clean = text.trim();
   if (!clean) return;
-
-  if (surveyStage === "q3") {
-    void finishSurvey(clean);
-    return;
-  }
 
   setTurns(t => [
     ...t,
@@ -908,8 +877,6 @@ export default function App() {
               setTab(to);
               setScreen("classic");
             }}
-            onSurvey={() => startSurvey(false)}
-            onChoice={pickChoice}
           />
         </div>
         {screen === "place" && active && (
