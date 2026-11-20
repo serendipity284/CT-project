@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  DEFAULT_PREFERENCE,
+  type SurveyAnswers,
+  type SurveyChoice,
+  type SurveyFactor,
+  type UserPreference,
+} from "./lib/heana-types";
+import { FACTOR_LABEL, preferenceFromChoices } from "./lib/heana-ranking";
 import { Bookmark, RefreshCw, Send } from "lucide-react";
 import {
   BUDGET_PRESETS,
@@ -35,6 +44,7 @@ import {
   contributeWithMenu,
   fetchPlaceInfo,
   fetchSavedPlaces,
+  saveSurveyApi,
   type ApiDish,
   type ApiMenuMeta,
   type ApiPlaceInfo,
@@ -60,6 +70,7 @@ import {
   toggleSave,
   addContribution,
   getContributions,
+  setGuestPref,
   type HistoryItem,
   type Review,
   type User,
@@ -444,9 +455,14 @@ export default function App() {
   }
 
   async function sendChat(text: string) {
-  const clean = text.trim();
+ const clean = text.trim();
   if (!clean) return;
 
+  // Đang ở Câu 3 của khảo sát: câu trả lời là danh sách dị ứng, không gửi vào /chat
+  if (surveyStage === "q3") {
+    await finishSurvey(clean);
+    return;
+  }
   setTurns(t => [
     ...t,
     { role: "user", text: clean }
@@ -863,6 +879,8 @@ export default function App() {
                     }}
                     onSuggest={startRandomFlow}
                     onReroll={() => suggestRandom()}
+                    onSurvey={() => startSurvey(false)}
+                    onChoice={pickChoice}
             draft={draft}
             onDraft={setDraft}
             onSend={(t) => void sendChat(t)}
