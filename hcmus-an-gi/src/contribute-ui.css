@@ -1,0 +1,152 @@
+/* Tab Đóng góp: dùng bảng màu của giao diện chat, giữ layout form cũ */
+.hx-contrib {
+    background: var(--hx-paper);
+    color: var(--hx-ink);
+    border-radius: 1.4rem;
+    padding: 1.2rem 1.4rem;
+}
+
+    .hx-contrib .section {
+        color: var(--hx-brown);
+        font-family: "Chakra Petch", var(--font);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .hx-contrib .muted {
+        color: #8d8174;
+    }
+
+    .hx-contrib label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        font-weight: 700;
+        font-size: 0.9rem;
+        color: var(--hx-ink);
+    }
+
+    .hx-contrib .field {
+        background: #fff;
+        border: 1px solid var(--hx-bubble-line);
+        border-radius: 1rem;
+        color: var(--hx-ink);
+        font-weight: 500;
+    }
+
+        .hx-contrib .field:focus {
+            outline: 2px solid var(--hx-brown);
+            outline-offset: 0;
+            border-color: var(--hx-brown);
+        }
+
+        .hx-contrib .field.tiny {
+            width: 100%;
+        }
+
+    .hx-contrib .btn-primary {
+        background: var(--hx-brown);
+        color: var(--hx-beige);
+        font-weight: 700;
+    }
+
+        .hx-contrib .btn-primary:disabled {
+            opacity: 0.55;
+        }
+
+    .hx-contrib .chip {
+        background: var(--hx-beige);
+        border: 1px solid var(--hx-brown);
+        color: var(--hx-brown);
+        font-weight: 700;
+    }
+
+        .hx-contrib .chip:hover {
+            background: var(--hx-brown);
+            color: var(--hx-beige);
+        }
+
+    .hx-contrib .error {
+        color: #b3261e;
+        font-weight: 600;
+    }
+
+    /* Khung ảnh menu + AI đọc */
+    .hx-contrib .menu-scan-box {
+        background: var(--hx-beige);
+        border: 0;
+        border-radius: 1.6rem;
+        padding: 1.1rem 1.2rem;
+    }
+
+    .hx-contrib .thumb img {
+        border-radius: 0.9rem;
+    }
+
+/* Chú thích */
+.hx-legend {
+    margin: 0;
+    padding: 0.6rem 0.9rem;
+    background: #fff;
+    border: 1px dashed var(--hx-bubble-line);
+    border-radius: 1rem;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--hx-ink);
+}
+
+    .hx-legend b {
+        color: var(--hx-brown);
+    }
+
+/* Thẻ món */
+.hx-dish-card {
+    background: #fff;
+    border-radius: 1.1rem;
+    padding: 0.8rem 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.hx-dish-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 9rem 8rem auto;
+    gap: 0.6rem;
+    align-items: end;
+}
+
+    .hx-dish-grid label span {
+        font-size: 0.78rem;
+        color: #8d8174;
+        font-weight: 700;
+    }
+
+    .hx-dish-grid .is-warn .field {
+        border-color: #d97706;
+        background: #fff8ec;
+    }
+
+.hx-ing-add {
+    align-self: flex-start;
+    border: 1px dashed var(--hx-brown);
+    background: none;
+    color: var(--hx-brown);
+    border-radius: 999px;
+    padding: 0.35rem 0.9rem;
+    font: 700 0.85rem var(--font);
+}
+
+    .hx-ing-add:hover {
+        background: var(--hx-beige);
+    }
+
+@media (max-width: 700px) {
+    .hx-dish-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+        .hx-dish-grid label:first-child {
+            grid-column: 1 / -1;
+        }
+}
