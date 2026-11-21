@@ -130,15 +130,15 @@ export async function fetchHistory() {
     {
       id: number;
       campus: string;
-      budget: number;
-      radius_m: number;
+      budget: number | null;
+      radius_m: number | null;
       query: string;
       created_at: string;
     }[]
   >("/history");
 }
 
-export async function postHistory(campus: string, budget: number, radiusM: number, query: string) {
+export async function postHistory(campus: string, budget: number | null, radiusM: number | null, query: string) {
   return req<{ ok: boolean }>("/history", {
     method: "POST",
     body: JSON.stringify({ campus, budget, radius_m: radiusM, query }),
@@ -155,9 +155,11 @@ export async function postChat(
   message: string,
   slots: {
     campus?: string;
-    budget?: number;
+    budget?: number | null;
+    budget_unlimited?: boolean;
     budget_is_default?: boolean;
-    radius_m?: number;
+    radius_m?: number | null;
+    radius_unlimited?: boolean;
     radius_is_default?: boolean;
     food_name?: string | null;
     place_name?: string | null;
@@ -170,9 +172,11 @@ export async function postChat(
   return req<{
     ready: boolean;
     campus?: string;
-    budget?: number;
+    budget?: number | null;
+    budget_unlimited?: boolean;
     budget_is_default?: boolean;
-    radius_m?: number;
+    radius_m?: number | null;
+    radius_unlimited?: boolean;
     radius_is_default?: boolean;
     food_name?: string | null;
     place_name?: string | null;

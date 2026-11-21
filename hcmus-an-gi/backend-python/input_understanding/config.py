@@ -5,10 +5,6 @@ Tất cả giá trị mặc định và ngưỡng giới hạn được định 
 không hardcode rải rác trong mã nguồn.
 """
 
-# Giá trị mặc định khi người dùng không cung cấp
-DEFAULT_BUDGET: int = 30_000       # 30.000 VND / người
-DEFAULT_RADIUS_M: int = 3_000      # 3.000 mét (3 km)
-
 # Ngưỡng giá trị hợp lệ
 MIN_BUDGET: int = 5_000            # 5.000 VND
 MAX_BUDGET: int = 2_000_000        # 2.000.000 VND
