@@ -378,6 +378,7 @@ def list_places(
     radius_m: Optional[int] = None,
     food: Optional[str] = None,
     cuisine: Optional[str] = None,
+
 ):
     if campus not in CAMPUSES:
         raise HTTPException(400, "campus phai la q5 hoac lang")
@@ -407,6 +408,20 @@ def list_places(
 
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
+
+        dish_names: dict[int, list[str]] = {}
+        if rows:
+            fmt = ",".join(["%s"] * len(rows))
+            try:
+                cur.execute(
+                    f"SELECT place_id, name FROM dishes "
+                    f"WHERE place_id IN ({fmt}) AND is_available = 1",
+                    [r["id"] for r in rows],
+                )
+                for d in cur.fetchall():
+                    dish_names.setdefault(d["place_id"], []).append(d["name"])
+            except Exception:
+                pass
     finally:
         cur.close()
         conn.close()
@@ -430,10 +445,11 @@ def list_places(
                 "address": p["address"],
                 "hours": p["hours"],
                 "meters": round(meters),
+                "dish_names": dish_names.get(p["id"], []),
             }
         )
 #Auto relax 
-    if len(out) == 0:
+    if len(out) == 0 and radius_m is not None:
          for p in rows:
                 lat, lng = float(p["lat"]), float(p["lng"])
                 meters = haversine(origin["lat"], origin["lng"], lat, lng)
@@ -454,6 +470,7 @@ def list_places(
                         "address": p["address"],
                         "hours": p["hours"],
                         "meters": round(meters),
+                        "dish_names": dish_names.get(p["id"], []),
                     }
                 )
 

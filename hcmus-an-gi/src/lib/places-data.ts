@@ -13,6 +13,7 @@ export type Place = {
   hours: string;
   /** Ảnh quán (tùy chọn). Không có thì hiện ảnh mặc định. */
   image_url?: string | null;
+  dish_names?: string[];
 };
 
 /** 30 quán mẫu (15/cơ sở) quanh 2 cơ sở — thay bằng Google Places khi có backend + key. */

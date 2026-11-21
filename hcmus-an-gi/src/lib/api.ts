@@ -47,6 +47,7 @@ export type ApiPlace = {
   address: string;
   hours: string;
   meters?: number;
+  dish_names?: string[];
 };
 
 export type ApiUser = { id: string; email: string; name: string };

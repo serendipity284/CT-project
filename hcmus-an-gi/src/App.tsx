@@ -122,6 +122,7 @@ export default function App() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [tab, setTab] = useState<"list" | "chat" | "me" | "contribute">("list");
   const [intent, setIntent] = useState<Intent>({});
+  const [chatFilter, setChatFilter] = useState({ food: "", place: "" });
   const [turns, setTurns] = useState<ChatTurn[]>([
     {
       role: "bot",
@@ -195,6 +196,7 @@ export default function App() {
           address: p.address,
           hours: p.hours,
           image_url: (p as { image_url?: string | null }).image_url ?? null,
+          dish_names: p.dish_names ?? [],
         })),
       );
       const revs = await apiFetchReviews();
@@ -278,8 +280,20 @@ export default function App() {
   const searchText = browsingDirectory ? directoryQuery : query;
   const ranked = useMemo(() => {
     const tokens = normalizeText(searchText).split(/\s+/).filter(Boolean);
-    const allCampuses = browsingDirectory ? !directoryHistoryFilter : namedSearch?.acrossCampuses;
+    const allCampuses = browsingDirectory ? !directoryHistoryFilter : Boolean(chatFilter.place) && !intent.campus;
     const limitResults = browsingDirectory ? directoryHistoryFilter : true;
+
+    const food = browsingDirectory ? "" : normalizeText(chatFilter.food);
+    const placeQ = browsingDirectory ? "" : normalizeText(chatFilter.place);
+
+    // 3 = tên quán chứa món, 2 = có món trong menu, 1 = loại món khớp, 0 = không liên quan
+    const relevance = (p: Place) => {
+      if (!food) return 0;
+      if  (normalizeText(p.name).includes(food)) return 3;
+      if ((p.dish_names ?? []).some((d) => normalizeText(d).includes(food))) return 2;
+      if (normalizeText(p.cuisine).includes(food)) return 1;
+      return 0;
+    };
 
     const list = places
       .filter((p) => allCampuses || p.campus === campus)
@@ -288,27 +302,32 @@ export default function App() {
         meters: Math.round(haversine(CAMPUSES[p.campus].lat, CAMPUSES[p.campus].lng, p.lat, p.lng)),
       }))
       .filter((p) => !limitResults || ((budget === null || p.price_min <= budget * 1.1) && (radius === null || p.meters <= radius * 1.2)))
-      
-      
       .filter((p) => !onlySaved || saved.includes(p.id))
       .filter((p) => {
-        if (!tokens.length) return true;
-        if (!browsingDirectory && namedSearch) return normalizeText(p.name).includes(tokens.join(" "));
-        const hay = normalizeText(`${p.name} ${p.cuisine} ${p.address}`);
-        return tokens.every((t) => hay.includes(t)); // mọi từ khóa đều phải khớp
+        if (browsingDirectory) {
+          if (!tokens.length) return true;
+          const hay = normalizeText(`${p.name} ${p.cuisine} ${p.address}`);
+          return tokens.every((t) => hay.includes(t));
+        }
+        if (placeQ && !normalizeText(p.name).includes(placeQ)) return false;
+        if (food && relevance(p) === 0) return false; // loại hẳn quán không liên quan
+        return true;
       });
 
     const priceKnown = (p: { price_max: number }) => p.price_max > 0;
     list.sort((a, b) => {
+      if (food) {
+        const d = relevance(b) - relevance(a);
+        if (d) return d;
+      }
       if (sortBy === "near") return a.meters - b.meters;
-      // quán "Chưa rõ giá" luôn xuống cuối khi sắp theo giá
       if (priceKnown(a) !== priceKnown(b)) return priceKnown(a) ? -1 : 1;
-      const diff =
-        sortBy === "price_asc" ? a.price_min - b.price_min : b.price_max - a.price_max;
-      return diff || a.meters - b.meters; // bằng giá thì quán gần hơn lên trước
+      const diff = sortBy === "price_asc" ? a.price_min - b.price_min : b.price_max - a.price_max;
+      return diff || a.meters - b.meters;
     });
     return list;
-  }, [places, campus, budget, radius, onlySaved, saved, searchText, sortBy, namedSearch, browsingDirectory, directoryHistoryFilter]);
+  }, [places, campus, budget, radius, onlySaved, saved, searchText, sortBy,
+      browsingDirectory, directoryHistoryFilter, chatFilter, intent.campus]);
 
   const active: (Place & { meters: number }) | null =
     ranked.find((p) => p.id === activeId) ?? ranked[0] ?? null;
@@ -529,6 +548,7 @@ export default function App() {
     setOnlySaved(false);
     setSortBy("near");
     setActiveId(null);
+    setChatFilter({ food: "", place: "" });
   }
   async function sendChat(text: string) {
   const clean = text.trim();
@@ -581,9 +601,12 @@ export default function App() {
         campus: result.campus as Intent["campus"],
         budget: result.budget_unlimited ? null : result.budget ?? undefined,
         radiusM: result.radius_unlimited ? null : result.radius_m ?? undefined,
+        foodName: result.food_name,
+        placeName: result.place_name,
       };
 
       setIntent(nextIntent);
+      setChatFilter({food: result.food_name ?? "", place: result.place_name ?? ""});
       // Persist emotion context for next turn
       setEmotionCtx(result.emotion ?? null);
       setEmotionTurn(result.emotion_turn);
@@ -606,6 +629,7 @@ export default function App() {
       const result = replyFor(clean, intent);
 
       setIntent(result.intent);
+      setChatFilter({food: result.intent.foodName ?? "", place: result.intent.placeName ?? ""});
 
       setTurns(t => [
         ...t,
@@ -1100,10 +1124,6 @@ export default function App() {
           )}
         </div>
       </header>
-
-      <p className="muted">
-        Thêm quán quanh <strong>{CAMPUSES[campus].short}</strong>.
-      </p>
       
       {apiError && <p className="error">{apiError}</p>}
       {regenMsg && <p className="muted">{regenMsg}</p>}
