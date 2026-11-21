@@ -4,6 +4,8 @@ import re
 import unicodedata
 from typing import Optional, NamedTuple
 
+from .context import UNLIMITED_PATTERNS
+
 
 class FoodExtractionResult(NamedTuple):
     food_name: Optional[str]
@@ -115,6 +117,15 @@ def _name(fragment: str) -> Optional[str]:
 
 def fallback_extract_food(text: str) -> FoodExtractionResult:
     text = unicodedata.normalize("NFC", text.strip())
+    # Remove filter clauses before extracting a dish or venue from the same turn.
+    normalized = remove_accents(text).lower()
+    spans = [match.span() for pattern in UNLIMITED_PATTERNS.values()
+             for match in pattern.finditer(normalized)]
+    if spans:
+        chars = list(text)
+        for start, end in spans:
+            chars[start:end] = "," * (end - start)
+        text = "".join(chars)
     lower = text.lower()
 
     # Nhận diện sở thích cơ bản nếu có trong câu

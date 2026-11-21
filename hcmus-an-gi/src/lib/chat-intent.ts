@@ -1,3 +1,4 @@
+import limitPatterns from "../../backend-python/input_understanding/unlimited_patterns.json";
 import { CAMPUSES, type CampusId } from "./campuses";
 
 export type Intent = {
@@ -6,8 +7,8 @@ export type Intent = {
   foodName?: string | null;
   placeName?: string | null;
   campus?: CampusId;
-  budget?: number;
-  radiusM?: number;
+  budget?: number | null;
+  radiusM?: number | null;
 };
 
 export type ChatTurn = {
@@ -50,7 +51,7 @@ function parseRadius(text: string): number | undefined {
 }
 
 export function readIntent(text: string, prev: Intent): Intent {
-  const next = { ...prev };
+  const next = { ...prev, budget: prev.budget ?? null, radiusM: prev.radiusM ?? null };
   const venue = text.normalize("NFC").match(
     /(?:^|\s)(quán|quan|tiệm|tiem|nhà hàng|nha hang)\s+(.+?)(?=\s+(?:ở|tại|gần|dưới|ngân sách|trong bán kính|quận\s+\d|q\d|bán|có bán|\d+\s*(?:k|m|km))|[,.!?;]|$)/iu,
   );
@@ -60,22 +61,18 @@ export function readIntent(text: string, prev: Intent): Intent {
   if (CAMPUS_Q5.test(text)) next.campus = "q5";
   if (CAMPUS_LANG.test(text)) next.campus = "lang";
   const money = parseMoney(text);
-  if (money) next.budget = money;
+  const normalized = text.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d");
+  if (new RegExp(limitPatterns.budget).test(normalized)) next.budget = null;
+  else if (money) next.budget = money;
   const radius = parseRadius(text);
-  if (radius) next.radiusM = radius;
+  if (new RegExp(limitPatterns.radius).test(normalized)) next.radiusM = null;
+  else if (radius) next.radiusM = radius;
   return next;
 }
 
 export function missingPrompt(intent: Intent): string | null {
   if (!intent.campus && !intent.placeName) {
     return "Bạn đang ở cơ sở nào — Quận 5 (Nguyễn Văn Cừ) hay Làng Đại học?";
-  }
-  if (!intent.budget) {
-    const area = intent.campus ? ` Đang lọc quanh ${CAMPUSES[intent.campus].short}.` : "";
-    return `Ngân sách tối đa mỗi người là bao nhiêu? Ví dụ: dưới 40k.${area}`;
-  }
-  if (!intent.radiusM) {
-    return "Bạn muốn đi bộ trong bao xa? Ví dụ: 500m hoặc 1km.";
   }
   return null;
 }
@@ -93,7 +90,7 @@ export function replyFor(
   const c = CAMPUSES[intent.campus!];
   return {
     intent,
-    say: `Được. Mình ghim các quán quanh ${c.short}, tối đa ${intent.budget!.toLocaleString("vi-VN")}đ, trong ${intent.radiusM}m. Chọn một quán để xem đường đi trên bản đồ nghiêng.`,
+    say: `Được. Mình ghim các quán quanh ${c.short}, ${intent.budget == null ? "không giới hạn giá" : `tối đa ${intent.budget.toLocaleString("vi-VN")}đ`}, ${intent.radiusM == null ? "không giới hạn bán kính" : `trong ${intent.radiusM}m`}. Chọn một quán để xem đường đi trên bản đồ nghiêng.`,
     ready: true,
   };
 }

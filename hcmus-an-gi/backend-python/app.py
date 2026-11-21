@@ -41,9 +41,8 @@ ENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(ENV_PATH, override=True)
 from input_understanding.extractor import extract_intent
 from input_understanding.validator import validate_intent
-from input_understanding.context import merge_context
+from input_understanding.context import UNLIMITED_PATTERNS, merge_context, merge_limits
 from input_understanding.normalizer import normalize_budget, normalize_budget_text
-from input_understanding.config import DEFAULT_BUDGET, DEFAULT_RADIUS_M
 from input_understanding.food import slugify_food, extract_search_keywords, fallback_extract_food
 
 load_dotenv()
@@ -548,8 +547,8 @@ def toggle_save(place_id: int, user: dict = Depends(current_user)):
 
 class HistoryIn(BaseModel):
     campus: str
-    budget: int
-    radius_m: int
+    budget: Optional[int]
+    radius_m: Optional[int]
     query: str
 
 
@@ -623,8 +622,10 @@ class ChatBody(BaseModel):
     message: str
     campus: Optional[str] = None
     budget: Optional[int] = None
+    budget_unlimited: bool = False
     budget_is_default: Optional[bool] = False
     radius_m: Optional[int] = None
+    radius_unlimited: bool = False
     radius_is_default: Optional[bool] = False
     food_name: Optional[str] = None
     place_name: Optional[str] = None
@@ -709,9 +710,11 @@ def chat(body: ChatBody):
 
     previous = {
         "campus": body.campus,
-        "budget": body.budget,
+        "budget": None if body.budget_is_default else body.budget,
+        "budget_unlimited": body.budget_unlimited,
         "budget_is_default": body.budget_is_default or False,
-        "radius_m": body.radius_m,
+        "radius_m": None if body.radius_is_default else body.radius_m,
+        "radius_unlimited": body.radius_unlimited,
         "radius_is_default": body.radius_is_default or False,
         "food_name": body.food_name,
         "place_name": body.place_name,
@@ -724,10 +727,13 @@ def chat(body: ChatBody):
         "turn_count": body.turn_count or 0,
     }
 
+    normalized_message = normalize_text(body.message)
+    unlimited = {f"{key}_unlimited": True for key, pattern in UNLIMITED_PATTERNS.items()
+                 if pattern.search(normalized_message)}
     try:
         extracted = extract_intent(body.message, previous)
         extracted = validate_intent(extracted)
-        intent = merge_context(previous, extracted)
+        intent = merge_context(previous, extracted.model_copy(update=unlimited))
 
     except Exception as e:
         print(
@@ -736,7 +742,6 @@ def chat(body: ChatBody):
         )
 
         # Chuyển văn bản về dạng không dấu để Regex dễ nhận diện
-        normalized_message = normalize_text(body.message)
 
         # Giữ lại ngữ cảnh trước đó
         intent = previous.copy()
@@ -757,15 +762,7 @@ def chat(body: ChatBody):
         if money is None:
             money = parse_money(normalize_text(budget_message))
 
-        if money is not None:
-            intent["budget"] = money
-            intent["budget_is_default"] = False
-
-        # Nhận diện bán kính
         radius = parse_radius(normalized_message)
-        if radius is not None:
-            intent["radius_m"] = radius
-            intent["radius_is_default"] = False
 
         # Fallback nhận diện món ăn (Food Understanding - không dùng danh sách cứng)
         if food_res.food_name:
@@ -800,15 +797,7 @@ def chat(body: ChatBody):
             intent["emotion"] = {"category": emo_cat, "confidence": 0.85, "wants_food_suggestion": wants_food}
             intent["emotion_turn"] = turn
 
-        # Áp dụng giá trị mặc định cho intent tìm kiếm nếu chưa có
-        is_search = intent.get("intent", "search_food") in ("search_food", "refine_search", "recommendation")
-        if is_search:
-            if intent.get("budget") is None:
-                intent["budget"] = DEFAULT_BUDGET
-                intent["budget_is_default"] = True
-            if intent.get("radius_m") is None:
-                intent["radius_m"] = DEFAULT_RADIUS_M
-                intent["radius_is_default"] = True
+        merge_limits(intent, {"budget": money, "radius_m": radius, **unlimited})
 
     # --- Xác định reply ---
     detected_intent = intent.get("intent", "search_food")
@@ -831,11 +820,11 @@ def chat(body: ChatBody):
             reply = "Bạn muốn tìm quán ở cơ sở Quận 5 hay Làng Đại học?"
         ready = False
 
-    elif not intent.get("budget"):
+    elif not intent.get("budget") and not intent.get("budget_unlimited"):
         reply = "Ngân sách tối đa mỗi người của bạn là bao nhiêu?"
         ready = False
 
-    elif not intent.get("radius_m"):
+    elif not intent.get("radius_m") and not intent.get("radius_unlimited"):
         reply = "Bạn muốn tìm quán trong khoảng cách bao xa?"
         ready = False
 
@@ -852,8 +841,15 @@ def chat(body: ChatBody):
             details.append(f"sở thích {intent['preference']}")
         budget_label = "ngân sách mặc định" if intent.get("budget_is_default") else "ngân sách"
         radius_label = "bán kính mặc định" if intent.get("radius_is_default") else "bán kính"
-        budget_text = f"{intent['budget']:,}".replace(",", ".")
-        details.extend([f"{budget_label} {budget_text}đ", f"{radius_label} {intent['radius_m']} m"])
+        if intent.get("budget_unlimited"):
+            details.append("không giới hạn giá")
+        else:
+            budget_text = f"{intent['budget']:,}".replace(",", ".")
+            details.append(f"{budget_label} {budget_text}đ")
+        if intent.get("radius_unlimited"):
+            details.append("không giới hạn bán kính")
+        else:
+            details.append(f"{radius_label} {intent['radius_m']} m")
         reply = "Mình đã ghi nhận " + ", ".join(details) + "."
         ready = True
 
@@ -861,8 +857,10 @@ def chat(body: ChatBody):
         "ready": ready,
         "campus": intent.get("campus"),
         "budget": intent.get("budget"),
+        "budget_unlimited": intent.get("budget_unlimited", False),
         "budget_is_default": intent.get("budget_is_default", False),
         "radius_m": intent.get("radius_m"),
+        "radius_unlimited": intent.get("radius_unlimited", False),
         "radius_is_default": intent.get("radius_is_default", False),
         "food_name": intent.get("food_name"),
         "place_name": intent.get("place_name"),

@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from input_understanding.food import slugify_food, extract_search_keywords, fallback_extract_food
-from input_understanding.config import DEFAULT_BUDGET, DEFAULT_RADIUS_M
 from input_understanding.schemas import ExtractedIntent, EmotionInfo
 from input_understanding.context import merge_context
 from input_understanding.validator import validate_intent
@@ -120,7 +119,7 @@ class TestFallbackExtractFood:
 # ---------------------------------------------------------------------------
 
 class TestDefaultsAndContext:
-    """Kiểm tra áp dụng DEFAULT_BUDGET (30k) và DEFAULT_RADIUS_M (3km)."""
+    """Kiểm tra giới hạn do người dùng đặt qua nhiều lượt."""
 
     def test_search_intent_applies_defaults_when_omitted(self):
         """Intent tìm kiếm quán tự động áp dụng giá trị mặc định khi người dùng không cung cấp."""
@@ -135,10 +134,10 @@ class TestDefaultsAndContext:
         ctx = merge_context(previous, extracted)
         assert ctx["campus"] == "q5"
         assert ctx["food_name"] == "cơm tấm"
-        assert ctx["budget"] == DEFAULT_BUDGET          # 30,000 VND
-        assert ctx["budget_is_default"] is True
-        assert ctx["radius_m"] == DEFAULT_RADIUS_M      # 3,000 mét
-        assert ctx["radius_is_default"] is True
+        assert ctx["budget"] is None
+        assert ctx["budget_unlimited"] is True
+        assert ctx["radius_m"] is None
+        assert ctx["radius_unlimited"] is True
 
     def test_user_provided_budget_and_radius_override_defaults(self):
         """Nếu người dùng chỉ định thì ưu tiên giá trị của người dùng."""
@@ -172,7 +171,7 @@ class TestDefaultsAndContext:
         """
         Kiểm tra chính xác kịch bản 3 lượt trong yêu cầu:
         Lượt 1: 'Tìm quán cơm tấm ở Quận 5.'
-          -> food_name = com_tam, campus = q5, budget = 30000 (default), radius_m = 3000 (default)
+          -> food_name = com_tam, campus = q5, không giới hạn giá và bán kính
         Lượt 2: 'Tăng ngân sách lên 50k.'
           -> budget = 50000 (user-provided), các thông tin khác giữ nguyên.
         Lượt 3: 'Tìm trong bán kính 5km.'
@@ -189,10 +188,10 @@ class TestDefaultsAndContext:
         ctx1 = merge_context({}, turn1_extracted)
         assert ctx1["food_name"] == "cơm tấm"
         assert ctx1["campus"] == "q5"
-        assert ctx1["budget"] == 30000
-        assert ctx1["budget_is_default"] is True
-        assert ctx1["radius_m"] == 3000
-        assert ctx1["radius_is_default"] is True
+        assert ctx1["budget"] is None
+        assert ctx1["budget_unlimited"] is True
+        assert ctx1["radius_m"] is None
+        assert ctx1["radius_unlimited"] is True
 
         # Turn 2: 'Tăng ngân sách lên 50k'
         turn2_extracted = ExtractedIntent(
@@ -207,8 +206,8 @@ class TestDefaultsAndContext:
         assert ctx2["campus"] == "q5"                   # giữ nguyên
         assert ctx2["budget"] == 50000                  # cập nhật giá trị mới của user
         assert ctx2["budget_is_default"] is False       # không còn là default
-        assert ctx2["radius_m"] == 3000                 # giữ nguyên default cũ
-        assert ctx2["radius_is_default"] is True
+        assert ctx2["radius_m"] is None
+        assert ctx2["radius_unlimited"] is True
 
         # Turn 3: 'Tìm trong bán kính 5km'
         turn3_extracted = ExtractedIntent(

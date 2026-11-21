@@ -35,10 +35,12 @@ class ExtractedIntent(BaseModel):
 
     # Ngân sách (VND)
     budget: Optional[int] = None
+    budget_unlimited: bool = False
     budget_is_default: bool = False
 
     # Khoảng cách (mét)
     radius_m: Optional[int] = None
+    radius_unlimited: bool = False
     radius_is_default: bool = False
 
     # Food Understanding

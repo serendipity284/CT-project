@@ -107,14 +107,14 @@ export default function App() {
   const [saved, setSaved] = useState<number[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [campus, setCampus] = useState<CampusId>("q5");
-  const [budget, setBudget] = useState(50000);
-  const [radius, setRadius] = useState(800);
+  const [budget, setBudget] = useState<number | null>(null);
+  const [radius, setRadius] = useState<number | null>(null);
   const [onlySaved, setOnlySaved] = useState(false);
   const [query, setQuery] = useState("");
+  const [directoryQuery, setDirectoryQuery] = useState("");
+  const [directoryHistoryFilter, setDirectoryHistoryFilter] = useState(false);
   const [namedSearch, setNamedSearch] = useState<{ acrossCampuses: boolean } | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("near");
-  // false = hiện tất cả quán của cơ sở; true = áp dụng lọc ngân sách + khoảng cách
-  const [useLimits, setUseLimits] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [tab, setTab] = useState<"list" | "chat" | "me" | "contribute">("list");
   const [intent, setIntent] = useState<Intent>({});
@@ -270,23 +270,26 @@ export default function App() {
     }
   }, [user, useApi]);
 
+  const browsingDirectory = screen === "classic" && tab === "list";
+  const searchText = browsingDirectory ? directoryQuery : query;
   const ranked = useMemo(() => {
-    const tokens = normalizeText(query).split(/\s+/).filter(Boolean);
+    const tokens = normalizeText(searchText).split(/\s+/).filter(Boolean);
+    const allCampuses = browsingDirectory ? !directoryHistoryFilter : namedSearch?.acrossCampuses;
+    const limitResults = browsingDirectory ? directoryHistoryFilter : true;
 
     const list = places
-      .filter((p) => namedSearch?.acrossCampuses || p.campus === campus)
+      .filter((p) => allCampuses || p.campus === campus)
       .map((p) => ({
         ...p,
         meters: Math.round(haversine(CAMPUSES[p.campus].lat, CAMPUSES[p.campus].lng, p.lat, p.lng)),
       }))
-      .filter((p) => p.price_min <= budget*1.1)
-      .filter((p) => p.meters <= radius*1.2)
+      .filter((p) => !limitResults || ((budget === null || p.price_min <= budget * 1.1) && (radius === null || p.meters <= radius * 1.2)))
       
       
       .filter((p) => !onlySaved || saved.includes(p.id))
       .filter((p) => {
         if (!tokens.length) return true;
-        if (namedSearch) return normalizeText(p.name).includes(tokens.join(" "));
+        if (!browsingDirectory && namedSearch) return normalizeText(p.name).includes(tokens.join(" "));
         const hay = normalizeText(`${p.name} ${p.cuisine} ${p.address}`);
         return tokens.every((t) => hay.includes(t)); // mọi từ khóa đều phải khớp
       });
@@ -301,7 +304,7 @@ export default function App() {
       return diff || a.meters - b.meters; // bằng giá thì quán gần hơn lên trước
     });
     return list;
-  }, [places, campus, budget, radius, onlySaved, saved, query, sortBy, useLimits, namedSearch]);
+  }, [places, campus, budget, radius, onlySaved, saved, searchText, sortBy, namedSearch, browsingDirectory, directoryHistoryFilter]);
 
   const active: (Place & { meters: number }) | null =
     ranked.find((p) => p.id === activeId) ?? ranked[0] ?? null;
@@ -383,11 +386,11 @@ export default function App() {
     return m;
   }, [reviews]);
 
-  async function remember(query: string) {
+  async function remember(query: string, search = { campus, budget, radiusM: radius }) {
     if (!user) return;
     if (useApi) {
       try {
-        await apiPostHistory(campus, budget, radius, query);
+        await apiPostHistory(search.campus, search.budget, search.radiusM, query);
         const h = await apiFetchHistory();
         setHistory(
           h.map((x) => ({
@@ -403,7 +406,7 @@ export default function App() {
         setApiError(e instanceof Error ? e.message : "Lỗi lịch sử");
       }
     } else {
-      setHistory(addHistory(user.id, { campus, budget, radiusM: radius, query }));
+      setHistory(addHistory(user.id, { ...search, query }));
     }
   }
 
@@ -411,9 +414,8 @@ export default function App() {
     setNamedSearch(next.placeName ? { acrossCampuses: !next.campus } : null);
     setQuery(next.placeName || next.foodName || "");
     if (next.campus) setCampus(next.campus);
-    if (next.budget) setBudget(next.budget);
-    if (next.radiusM) setRadius(next.radiusM);
-    setUseLimits(true); // chat đã chốt ngân sách/khoảng cách → áp dụng lọc
+    if (next.budget !== undefined) setBudget(next.budget);
+    if (next.radiusM !== undefined) setRadius(next.radiusM);
   }
     //recommend random 
     // opts.pref: dùng khảo sát vừa làm xong (state `pref` chưa kịp cập nhật trong cùng lượt render)
@@ -424,7 +426,7 @@ export default function App() {
             setTurns((t) => [...t, { role: "user", text: "🎲 Gợi ý cho mình 5 quán" }]);
         }
         const picks = suggestRandomPlaces(
-            ranked, ratings, opts?.pref ?? pref, CAMPUSES[campus], radius,
+            ranked, ratings, opts?.pref ?? pref, CAMPUSES[campus], radius ?? ranked.reduce((max, p) => Math.max(max, p.meters), 1),
             opts?.reset ? [] : suggestedIds, 5,
         );
         if (!picks.length) {
@@ -472,9 +474,8 @@ export default function App() {
     setNamedSearch(null);
     setQuery("");
     setCampus("q5");
-    setBudget(50000);
-    setRadius(800);
-    setUseLimits(false);
+    setBudget(null);
+    setRadius(null);
     setOnlySaved(false);
     setSortBy("near");
     setActiveId(null);
@@ -500,6 +501,8 @@ export default function App() {
   try {
     if (useApi) {
       const result = await postChat(clean, {
+        budget_unlimited: intent.budget === null,
+        radius_unlimited: intent.radiusM === null,
         budget_is_default: intent.budgetIsDefault,
         radius_is_default: intent.radiusIsDefault,
         food_name: intent.foodName,
@@ -519,8 +522,8 @@ export default function App() {
         foodName: result.food_name,
         placeName: result.place_name,
         campus: result.campus as Intent["campus"],
-        budget: result.budget,
-        radiusM: result.radius_m,
+        budget: result.budget_unlimited ? null : result.budget ?? undefined,
+        radiusM: result.radius_unlimited ? null : result.radius_m ?? undefined,
       };
 
       setIntent(nextIntent);
@@ -538,7 +541,7 @@ export default function App() {
         applyIntent(nextIntent);
         setTurns(t => [...t, { role: "bot", text: "Danh sách quán", list: true }]);
         setActiveId(null);
-        void remember(clean);
+        void remember(clean, { campus: nextIntent.campus ?? campus, budget: nextIntent.budget ?? null, radiusM: nextIntent.radiusM ?? null });
       }
 
     } else {
@@ -933,6 +936,7 @@ export default function App() {
             }}
             onNavigate={(to: NavTarget) => {
               if (to === "chat") return;
+              if (to === "list") setDirectoryHistoryFilter(false);
               setTab(to);
               setScreen("classic");
             }}
@@ -1023,8 +1027,8 @@ export default function App() {
                 <input
                   className="field grow"
                   type="search"
-                  value={query}
-                  onChange={(e) => { setNamedSearch(null); setQuery(e.target.value); }}
+                  value={directoryQuery}
+                  onChange={(e) => setDirectoryQuery(e.target.value)}
                   placeholder="Tìm tên quán, món, địa chỉ…"
                   aria-label="Tìm quán"
                 />
@@ -1139,8 +1143,8 @@ export default function App() {
 
               {ranked.length === 0 && (
                 <p className="muted">
-                  {query.trim()
-                    ? `Không tìm thấy quán khớp "${query.trim()}".`
+                  {directoryQuery.trim()
+                    ? `Không tìm thấy quán khớp "${directoryQuery.trim()}".`
                     : "Chưa có quán nào trong danh sách."}
                 </p>
               )}
@@ -1511,15 +1515,16 @@ export default function App() {
                       className="card"
                       onClick={() => {
                         setCampus(h.campus as CampusId);
+                        setDirectoryHistoryFilter(true);
+                        setDirectoryQuery("");
                         setBudget(h.budget);
                         setRadius(h.radiusM);
-                        setUseLimits(true);
                         setTab("list");
                       }}
                     >
                       <strong>{h.query}</strong>
                       <span>
-                        {h.campus === "q5" ? "Quận 5" : "Làng ĐH"} · {vnd(h.budget)} · {h.radiusM}m
+                        {h.campus === "q5" ? "Quận 5" : "Làng ĐH"} · {h.budget == null ? "Không giới hạn giá" : vnd(h.budget)} · {h.radiusM == null ? "Không giới hạn bán kính" : `${h.radiusM}m`}
                       </span>
                     </button>
                   ))}
@@ -1527,7 +1532,7 @@ export default function App() {
                     type="button"
                     className="chip"
                     onClick={() =>
-                      void remember(`Thủ công ${CAMPUSES[campus].short} ${budget} ${radius}m`)
+                      void remember(`Thủ công ${CAMPUSES[campus].short} ${budget == null ? "không giới hạn giá" : vnd(budget)} · ${radius == null ? "không giới hạn bán kính" : `${radius}m`}`)
                     }
                   >
                     Lưu lần tìm hiện tại
@@ -1654,6 +1659,7 @@ export default function App() {
                   if (id === "chat") {
                     setScreen("chat");
                   } else {
+                    if (id === "list") setDirectoryHistoryFilter(false);
                     setTab(id);
                   }
                 }}
