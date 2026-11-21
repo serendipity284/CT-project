@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+from .food import fallback_extract_food, remove_accents
 from .schemas import ExtractedIntent
 
 
@@ -51,41 +52,13 @@ Phân tích tin nhắn tiếng Việt (kể cả tiếng lóng, viết tắt) v�
 - "emotion_based_food_suggestion": người dùng bày tỏ cảm xúc kèm mong muốn được gợi ý món ăn
 - "other": tin nhắn không liên quan đến ăn uống
 
-## NHẬN DIỆN MÓN ĂN (food_type, food_group, preference) — QUAN TRỌNG
-1. **food_type**: Chuẩn hóa tên món cụ thể về định dạng snake_case chuẩn:
-   - "cơm tấm", "cơm sườn", "sườn bì chả" -> "com_tam"
-   - "cơm gà", "gà xối mỡ" -> "com_ga"
-   - "cơm", "cơm trưa", "cơm bình dân" -> "com"
-   - "phở", "phở bò", "phở gà" -> "pho"
-   - "bún bò", "bún bò huế" -> "bun_bo"
-   - "bún thịt nướng" -> "bun_thit_nuong"
-   - "bún riêu" -> "bun_rieu"
-   - "bún" -> "bun"
-   - "bánh mì", "bánh mỳ" -> "banh_mi"
-   - "hủ tiếu", "hủ tíu" -> "hu_tieu"
-   - "mì", "mì quảng", "mì cay", "ramen" -> "mi"
-   - "cháo", "cháo lòng", "cháo gà" -> "chao"
-   - "xôi", "xôi mặn", "xôi gà" -> "xoi"
-   - "lẩu", "lẩu thái" -> "lau"
-   - "trà sữa" -> "tra_sua"
-   - "cà phê", "cafe" -> "ca_phe"
-   - "bánh tráng trộn" -> "banh_trang_tron"
-   - "ăn vặt", "đồ ăn vặt" -> "an_vat"
-   - "chay", "cơm chay", "quán chay" -> "chay"
-   Ví dụ:
-   - "Tìm quán cơm tấm ở Quận 5" -> food_type = "com_tam", campus = "q5"
-   - "Tôi muốn ăn phở" -> food_type = "pho"
-   - "Tìm quán bún bò dưới 40k" -> food_type = "bun_bo", budget = 40000
+## TÊN MÓN VÀ TÊN QUÁN
+- food_name: chép nguyên cụm tên món trong tin nhắn hiện tại, kể cả dấu, số, biến thể, topping và tên lạ. Không quy về món phổ biến.
+- place_name: chép tên riêng của quán. Phân biệt "tìm quán bán bánh mì que" (chỉ có món) với "tìm quán Cô Ba" (chỉ có tên quán).
+- "Tìm bánh mì que ở quán Cô Ba dưới 30k" -> food_name = "bánh mì que", place_name = "Cô Ba".
+- Nếu chỉ gửi "bánh mì que", food_name = "bánh mì que". Nếu không nhắc tên ở lượt này, trường tương ứng là null.
 
-2. **food_group**: Nhận diện nhóm món:
-   - "mon_nuoc": món nước, có nước, húp nước (phở, bún, hủ tiếu, mì, cháo...)
-   - "do_chien": đồ chiên, món chiên, chiên giòn, rán
-   - "do_nuong": đồ nướng, món nướng, thịt nướng
-   - "do_an_vat": đồ ăn vặt, ăn vặt, tráng miệng
-   - "mon_chay": món chay, đồ chay
-   - "do_uong": đồ uống, nước giải khát, trà sữa
-
-3. **preference**: Nhận diện sở thích ăn uống nếu có:
+**preference**: Nhận diện sở thích ăn uống nếu có:
    - "cay": cay, nhiều cay, ăn cay
    - "khong_cay": không cay, ít cay, bớt cay
    - "chay": thuần chay, ăn chay
@@ -135,7 +108,24 @@ CHÚ Ý: Nếu người dùng không nhắc khoảng cách, để null (hệ th�
                 )
             )
             if response.text:
-                return ExtractedIntent.model_validate_json(response.text)
+                extracted = ExtractedIntent.model_validate_json(response.text)
+                # Recover the original spelling and modifiers if the model shortens a name.
+                fallback = fallback_extract_food(message)
+                if not extracted.place_name and not extracted.food_name:
+                    extracted.place_name = fallback.place_name
+                elif extracted.place_name and fallback.place_name:
+                    # Preserve the full venue when the model returns only its suffix.
+                    full_name = remove_accents(fallback.place_name).casefold()
+                    suffix = remove_accents(extracted.place_name).casefold().strip()
+                    if full_name.endswith(" " + suffix):
+                        extracted.place_name = fallback.place_name
+                candidate = fallback.food_name
+                if candidate and extracted.food_name:
+                    model_words = remove_accents(extracted.food_name).casefold().replace("_", " ").split()
+                    source_words = remove_accents(candidate).casefold().split()
+                    if model_words and source_words[:len(model_words)] == model_words:
+                        extracted.food_name = candidate
+                return extracted
         except Exception as e:
             last_err = e
             continue

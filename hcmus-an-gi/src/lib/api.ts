@@ -159,8 +159,8 @@ export async function postChat(
     budget_is_default?: boolean;
     radius_m?: number;
     radius_is_default?: boolean;
-    food_type?: string;
-    food_group?: string;
+    food_name?: string | null;
+    place_name?: string | null;
     preference?: string;
     emotion?: EmotionContext;
     emotion_turn?: number;
@@ -174,8 +174,8 @@ export async function postChat(
     budget_is_default?: boolean;
     radius_m?: number;
     radius_is_default?: boolean;
-    food_type?: string;
-    food_group?: string;
+    food_name?: string | null;
+    place_name?: string | null;
     preference?: string;
     reply: string;
     emotion?: EmotionContext;
