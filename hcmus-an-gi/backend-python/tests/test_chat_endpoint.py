@@ -21,6 +21,32 @@ from input_understanding.schemas import ExtractedIntent, EmotionInfo
 client = TestClient(app)
 
 
+def test_named_place_after_campus_question():
+    with patch("app.extract_intent", side_effect=RuntimeError("offline")):
+        first = client.post("/chat", json={"message": "tôi muốn ăn cơm tấm"}).json()
+        assert not first["ready"]
+        second = client.post("/chat", json={**first, "message": "ở quán cơm tấm 123"}).json()
+    assert second["ready"] and second["campus"] is None
+    assert second["place_name"] == "cơm tấm 123"
+    assert second["food_name"] == "cơm tấm"
+    assert second["budget"] == first["budget"]
+
+
+@pytest.mark.parametrize("message, expected_name, asks_campus", [
+    ("Tìm quán Cô Ba", "Cô Ba", False),
+    ("Muốn ăn mừng ở quán Cô Ba", "Cô Ba", False),
+    ("Tìm quán bán bánh mì que", None, True),
+])
+def test_campus_prompt_depends_on_named_place(message, expected_name, asks_campus):
+    with patch("app.extract_intent", side_effect=RuntimeError("offline")):
+        response = client.post("/chat", json={"message": message})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["campus"] is None
+    assert data["place_name"] == expected_name
+    assert ("cơ sở" in data["reply"].lower()) == asks_campus
+
+
 # ---------------------------------------------------------------------------
 # PHẦN 1: TEST BUDGET RECOGNITION QUA /chat
 # ---------------------------------------------------------------------------

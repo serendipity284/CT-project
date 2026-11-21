@@ -102,7 +102,7 @@ export default function App() {
   const [mysqlOk, setMysqlOk] = useState<boolean | null>(null);
   const [apiError, setApiError] = useState("");
   const [user, setUser] = useState<User | null>(null);
-  const [places, setPlaces] = useState<Place[]>(() => initialPlaces());
+  const [places, setPlaces] = useState<Place[]>(() => useApi ? [] : initialPlaces());
   const [reviews, setReviews] = useState<Review[]>([]);
   const [saved, setSaved] = useState<number[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -111,6 +111,7 @@ export default function App() {
   const [radius, setRadius] = useState(800);
   const [onlySaved, setOnlySaved] = useState(false);
   const [query, setQuery] = useState("");
+  const [namedSearch, setNamedSearch] = useState<{ acrossCampuses: boolean } | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("near");
   // false = hiện tất cả quán của cơ sở; true = áp dụng lọc ngân sách + khoảng cách
   const [useLimits, setUseLimits] = useState(false);
@@ -166,7 +167,7 @@ export default function App() {
     q1: "any",
     q2: null,
   });
-  const askedFor = useRef<string | null>(null);
+  const chatSession = useRef(0);
   // true = khảo sát này được bật từ nút 🎲 -> làm xong sẽ tự động random
   const pendingRandom = useRef(false);
 
@@ -176,7 +177,7 @@ export default function App() {
     try {
       const h = await apiHealth();
       setMysqlOk(h.mysql);
-      const list = await apiFetchPlaces(campus);
+      const list = (await Promise.all(Object.keys(CAMPUSES).map(id => apiFetchPlaces(id)))).flat();
       setPlaces(
         list.map((p) => ({
           id: p.id,
@@ -207,7 +208,7 @@ export default function App() {
       setMysqlOk(false);
       setApiError(e instanceof Error ? e.message : "Không gọi được API");
     }
-  }, [useApi, campus]);
+  }, [useApi]);
 
   useEffect(() => {
     if (useApi) {
@@ -270,15 +271,14 @@ export default function App() {
   }, [user, useApi]);
 
   const ranked = useMemo(() => {
-    const origin = CAMPUSES[campus];
     const tokens = normalizeText(query).split(/\s+/).filter(Boolean);
 
     const list = places
+      .filter((p) => namedSearch?.acrossCampuses || p.campus === campus)
       .map((p) => ({
         ...p,
-        meters: Math.round(haversine(origin.lat, origin.lng, p.lat, p.lng)),
+        meters: Math.round(haversine(CAMPUSES[p.campus].lat, CAMPUSES[p.campus].lng, p.lat, p.lng)),
       }))
-      .filter((p) => p.campus === campus)
       .filter((p) => p.price_min <= budget*1.1)
       .filter((p) => p.meters <= radius*1.2)
       
@@ -286,6 +286,7 @@ export default function App() {
       .filter((p) => !onlySaved || saved.includes(p.id))
       .filter((p) => {
         if (!tokens.length) return true;
+        if (namedSearch) return normalizeText(p.name).includes(tokens.join(" "));
         const hay = normalizeText(`${p.name} ${p.cuisine} ${p.address}`);
         return tokens.every((t) => hay.includes(t)); // mọi từ khóa đều phải khớp
       });
@@ -300,7 +301,7 @@ export default function App() {
       return diff || a.meters - b.meters; // bằng giá thì quán gần hơn lên trước
     });
     return list;
-  }, [places, campus, budget, radius, onlySaved, saved, query, sortBy, useLimits]);
+  }, [places, campus, budget, radius, onlySaved, saved, query, sortBy, useLimits, namedSearch]);
 
   const active: (Place & { meters: number }) | null =
     ranked.find((p) => p.id === activeId) ?? ranked[0] ?? null;
@@ -313,7 +314,7 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    const origin = CAMPUSES[campus];
+    const origin = CAMPUSES[active.campus];
     setRouteLoading(true);
     setRouteError("");
     fetchWalkingRoute(origin.lat, origin.lng, active.lat, active.lng).then((r) => {
@@ -407,6 +408,8 @@ export default function App() {
   }
 
   function applyIntent(next: Intent) {
+    setNamedSearch(next.placeName ? { acrossCampuses: !next.campus } : null);
+    setQuery(next.placeName || next.foodName || "");
     if (next.campus) setCampus(next.campus);
     if (next.budget) setBudget(next.budget);
     if (next.radiusM) setRadius(next.radiusM);
@@ -454,7 +457,31 @@ export default function App() {
     pendingRandom.current = true; // đặt SAU startSurvey (startSurvey sẽ reset cờ này)
   }
 
+  function startNewChat() {
+    chatSession.current += 1;
+    setTurns(t => t.slice(0, 1));
+    setDraft("");
+    setIntent({});
+    setEmotionCtx(null);
+    setEmotionTurn(undefined);
+    setTurnCount(0);
+    pendingRandom.current = false;
+    setSurveyStage(null);
+    setSurveyAns({ q1: "any", q2: null });
+    setSuggestedIds([]);
+    setNamedSearch(null);
+    setQuery("");
+    setCampus("q5");
+    setBudget(50000);
+    setRadius(800);
+    setUseLimits(false);
+    setOnlySaved(false);
+    setSortBy("near");
+    setActiveId(null);
+  }
+
   async function sendChat(text: string) {
+  const session = chatSession.current;
  const clean = text.trim();
   if (!clean) return;
 
@@ -473,6 +500,10 @@ export default function App() {
   try {
     if (useApi) {
       const result = await postChat(clean, {
+        budget_is_default: intent.budgetIsDefault,
+        radius_is_default: intent.radiusIsDefault,
+        food_name: intent.foodName,
+        place_name: intent.placeName,
         campus: intent.campus,
         budget: intent.budget,
         radius_m: intent.radiusM,
@@ -481,7 +512,12 @@ export default function App() {
         turn_count: turnCount,
       });
 
+      if (session !== chatSession.current) return;
       const nextIntent: Intent = {
+        budgetIsDefault: result.budget_is_default,
+        radiusIsDefault: result.radius_is_default,
+        foodName: result.food_name,
+        placeName: result.place_name,
         campus: result.campus as Intent["campus"],
         budget: result.budget,
         radiusM: result.radius_m,
@@ -523,6 +559,7 @@ export default function App() {
       }
     }
   } catch (error) {
+    if (session !== chatSession.current) return;
     setTurns(t => [
       ...t,
       {
@@ -703,6 +740,7 @@ export default function App() {
   }
 
   async function finishSurvey(text: string) {
+    const session = chatSession.current;
     const none = /^(không|khong|ko|no|k)$/i.test(text.trim());
     const answers: SurveyAnswers = {
       q1: surveyAns.q1,
@@ -713,6 +751,7 @@ export default function App() {
     setDraft("");
     try {
       const newPref = await submitSurvey(answers);
+      if (session !== chatSession.current) return;
       setSurveyStage(null);
       if (pendingRandom.current) {
         pendingRandom.current = false;
@@ -731,6 +770,7 @@ export default function App() {
         },
       ]);
     } catch (e) {
+      if (session !== chatSession.current) return;
       setTurns((t) => [
         ...t,
         {
@@ -868,6 +908,7 @@ export default function App() {
         {/* ẩn (không huỷ) khung chat khi đang ở trang quán → quay lại vẫn còn danh sách */}
         <div style={{ display: screen === "chat" ? "contents" : "none" }}>
           <ChatHome
+            onNewChat={startNewChat}
             userName={user?.name ?? null}
             turns={turns}
             results={ranked}
@@ -901,7 +942,7 @@ export default function App() {
           <PlacePage
             mode={placeMode}
             place={active}
-            campus={campus}
+            campus={active.campus}
             rating={ratings[active.id]}
             reviews={activeReviews}
             info={<PlaceInfoText place={active} info={activeInfo} />}
@@ -983,7 +1024,7 @@ export default function App() {
                   className="field grow"
                   type="search"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => { setNamedSearch(null); setQuery(e.target.value); }}
                   placeholder="Tìm tên quán, món, địa chỉ…"
                   aria-label="Tìm quán"
                 />

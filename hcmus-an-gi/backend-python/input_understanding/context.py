@@ -2,7 +2,7 @@
 context.py – Hợp nhất ngữ cảnh hội thoại qua các lượt (Multi-turn Context Management).
 
 Quy tắc:
-1. Duy trì và cập nhật thông tin món ăn (food_type, food_group, preference).
+1. Duy trì và cập nhật thông tin món ăn (food_name, place_name, preference).
 2. Tự động áp dụng giá trị mặc định cho ngân sách (DEFAULT_BUDGET = 30.000đ)
    và khoảng cách (DEFAULT_RADIUS_M = 3.000m) khi người dùng không cung cấp
    CHO CÁC INTENT TÌM KIẾM QUÁN (search_food, refine_search, recommendation).
@@ -54,8 +54,8 @@ def merge_context(previous: dict, extracted) -> dict:
     if data.get("cuisine") is not None:
         result["cuisine"] = data["cuisine"]
 
-    # --- Food Understanding: food_type, food_group, preference, food_info ---
-    for food_key in ("food_type", "food_group", "preference", "food_info"):
+    # --- Food Understanding: food_name, place_name, preference ---
+    for food_key in ("food_name", "place_name", "preference"):
         if data.get(food_key) is not None:
             result[food_key] = data[food_key]
 

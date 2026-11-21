@@ -9,6 +9,7 @@ export type NavTarget = "chat" | "list" | "contribute" | "me";
 type ResultPlace = Place & { meters: number };
 
 type Props = {
+  onNewChat: () => void;
   userName: string | null;
   results: ResultPlace[];
   ratings: Record<number, { avg: number; count: number }>;
@@ -71,7 +72,7 @@ function Star() {
 }
 
 export function ChatHome({
-    userName, results, ratings, onOpenPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate, onSurvey, onChoice, onSuggest, onReroll
+    userName, results, ratings, onOpenPlace, turns, draft, onDraft, onSend, onLogin, onLogout, onNavigate, onSurvey, onChoice, onSuggest, onReroll, onNewChat
 }: Props) {
   const [open, setOpen] = useState(false);
   // popup bên phải danh sách: quán đang chọn + vị trí dọc (px, tính từ đầu khung danh sách)
@@ -89,6 +90,7 @@ export function ChatHome({
     setPop({ id, top: Math.min(Math.max(mid, 56), Math.max(wrap.height - 56, 56)) });
   }
   const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -182,7 +184,7 @@ export function ChatHome({
                           if (Math.abs(e.currentTarget.scrollTop - popScroll.current) > 4) setPop(null);
                         }}>
                         {shown.length === 0 && (
-                          <p className="hx-empty">Không có quán khớp. Hãy thử tăng ngân sách hoặc khoảng cách.</p>
+                          <p className="hx-empty">Không tìm thấy quán phù hợp. Bạn thử kiểm tra tên quán, ngân sách hoặc khoảng cách nhé.</p>
                         )}
                         {shown.map((p) => {
                           const r = ratings[p.id];
@@ -235,6 +237,12 @@ export function ChatHome({
           </div>
 
                   <div className="hx-choices">
+                      <button type="button" onClick={() => {
+                        onNewChat();
+                        setOpen(false);
+                        setPop(null);
+                        inputRef.current?.focus();
+                      }}>+ Chat mới</button>
                       <button type="button" onClick={() => onSuggest()}>🎲 Gợi ý ngẫu nhiên cho tôi</button>
                   </div>
 
@@ -246,6 +254,7 @@ export function ChatHome({
             }}
           >
             <input
+              ref={inputRef}
               value={draft}
               onChange={(e) => onDraft(e.target.value)}
               placeholder="Quận 5, dưới 35k, 400m…"

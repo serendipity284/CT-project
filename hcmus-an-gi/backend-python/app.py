@@ -388,9 +388,12 @@ def list_places(
     try:
         sql = (
             "SELECT id, name, campus, lat, lng, price_min, price_max, cuisine, address, hours_text AS hours "
-            "FROM places WHERE campus = %s AND price_min <= %s"
+            "FROM places WHERE campus = %s"
         )
-        params: list[Any] = [campus, budget]
+        params: list[Any] = [campus]
+        if budget is not None:
+            sql += " AND price_min <= %s"
+            params.append(budget)
 
         food_target = food or cuisine
         if food_target:
@@ -623,8 +626,8 @@ class ChatBody(BaseModel):
     budget_is_default: Optional[bool] = False
     radius_m: Optional[int] = None
     radius_is_default: Optional[bool] = False
-    food_type: Optional[str] = None
-    food_group: Optional[str] = None
+    food_name: Optional[str] = None
+    place_name: Optional[str] = None
     preference: Optional[str] = None
     cuisine: Optional[str] = None
     keywords: list[str] = Field(default_factory=list)
@@ -710,8 +713,8 @@ def chat(body: ChatBody):
         "budget_is_default": body.budget_is_default or False,
         "radius_m": body.radius_m,
         "radius_is_default": body.radius_is_default or False,
-        "food_type": body.food_type,
-        "food_group": body.food_group,
+        "food_name": body.food_name,
+        "place_name": body.place_name,
         "preference": body.preference,
         "cuisine": body.cuisine,
         "keywords": body.keywords,
@@ -746,9 +749,13 @@ def chat(body: ChatBody):
             intent["campus"] = "lang"
 
         # Nhận diện ngân sách – dùng normalizer (hỗ trợ 200000, 200k, v.v.)
-        money = parse_money(body.message)  # dùng text gốc (có dấu)
+        food_res = fallback_extract_food(body.message)
+        budget_message = body.message
+        if food_res.place_name:
+            budget_message = budget_message.replace(food_res.place_name, "", 1)
+        money = parse_money(budget_message)
         if money is None:
-            money = parse_money(normalized_message)  # fallback không dấu
+            money = parse_money(normalize_text(budget_message))
 
         if money is not None:
             intent["budget"] = money
@@ -761,11 +768,10 @@ def chat(body: ChatBody):
             intent["radius_is_default"] = False
 
         # Fallback nhận diện món ăn (Food Understanding - không dùng danh sách cứng)
-        food_res = fallback_extract_food(body.message)
-        if food_res.food_type:
-            intent["food_type"] = food_res.food_type
-        if food_res.food_group:
-            intent["food_group"] = food_res.food_group
+        if food_res.food_name:
+            intent["food_name"] = food_res.food_name
+        if food_res.place_name:
+            intent["place_name"] = food_res.place_name
         if food_res.preference:
             intent["preference"] = food_res.preference
 
@@ -806,22 +812,21 @@ def chat(body: ChatBody):
 
     # --- Xác định reply ---
     detected_intent = intent.get("intent", "search_food")
-    food_key = intent.get("food_type")
-    food_display = food_key.replace("_", " ").title() if food_key else None
+    food_display = intent.get("food_name") or ""
 
     # Trường hợp emotion-based: trả lời cảm xúc nếu không đủ thông tin tìm kiếm
     emotion_reply = _build_emotion_reply(intent)
 
-    if detected_intent == "emotion_based_food_suggestion" and emotion_reply:
+    if detected_intent == "emotion_based_food_suggestion" and emotion_reply and not intent.get("place_name"):
         reply = emotion_reply
         ready = False
 
-    elif not intent.get("campus"):
+    elif not intent.get("campus") and not intent.get("place_name"):
         # Nếu có cảm xúc, hỏi kèm theo ngữ cảnh cảm xúc
         if emotion_reply:
             reply = emotion_reply
         elif food_display:
-            reply = f"Bạn muốn tìm quán {food_display} ở cơ sở Quận 5 hay Làng Đại học?"
+            reply = f"Bạn muốn tìm {food_display} ở cơ sở Quận 5 hay Làng Đại học?"
         else:
             reply = "Bạn muốn tìm quán ở cơ sở Quận 5 hay Làng Đại học?"
         ready = False
@@ -835,15 +840,21 @@ def chat(body: ChatBody):
         ready = False
 
     else:
-        food_part = f"quán {food_display} " if food_display else ""
-        pref_part = f"(vị: {intent['preference']}) " if intent.get("preference") else ""
-        b_val = intent['budget']
-        b_part = f"ngân sách mặc định: {b_val:,}đ" if intent.get("budget_is_default") else f"ngân sách: {b_val:,}đ"
-        r_val = intent['radius_m']
-        r_part = f"khoảng cách mặc định: {r_val}m" if intent.get("radius_is_default") else f"khoảng cách: {r_val}m"
-        campus_label = "Quận 5" if intent['campus'] == "q5" else "Làng Đại học"
-
-        reply = f"Đã hiểu yêu cầu! Tìm {food_part}{pref_part}quanh {campus_label}, {b_part}, {r_part}."
+        details = []
+        if food_display:
+            details.append(f"món {food_display}")
+        if intent.get("place_name"):
+            details.append(f"quán {intent['place_name']}")
+        if intent.get("campus") in CAMPUSES:
+            campus_label = "Quận 5" if intent["campus"] == "q5" else "Làng Đại học"
+            details.append(f"khu vực {campus_label}")
+        if intent.get("preference"):
+            details.append(f"sở thích {intent['preference']}")
+        budget_label = "ngân sách mặc định" if intent.get("budget_is_default") else "ngân sách"
+        radius_label = "bán kính mặc định" if intent.get("radius_is_default") else "bán kính"
+        budget_text = f"{intent['budget']:,}".replace(",", ".")
+        details.extend([f"{budget_label} {budget_text}đ", f"{radius_label} {intent['radius_m']} m"])
+        reply = "Mình đã ghi nhận " + ", ".join(details) + "."
         ready = True
 
     return {
@@ -853,8 +864,8 @@ def chat(body: ChatBody):
         "budget_is_default": intent.get("budget_is_default", False),
         "radius_m": intent.get("radius_m"),
         "radius_is_default": intent.get("radius_is_default", False),
-        "food_type": intent.get("food_type"),
-        "food_group": intent.get("food_group"),
+        "food_name": intent.get("food_name"),
+        "place_name": intent.get("place_name"),
         "preference": intent.get("preference"),
         "reply": reply,
         # Trả về emotion context để frontend lưu và gửi lại lượt sau

@@ -84,16 +84,15 @@ class TestFallbackExtractFood:
 
     def test_tim_quan_com_tam(self):
         res = fallback_extract_food("Tìm quán cơm tấm ở Quận 5")
-        assert res.food_type == "com_tam"
         assert res.food_name == "cơm tấm"
 
     def test_toi_muon_an_pho(self):
         res = fallback_extract_food("Tôi muốn ăn phở")
-        assert res.food_type == "pho"
+        assert res.food_name == "phở"
 
     def test_tim_quan_bun_bo(self):
         res = fallback_extract_food("Tìm quán bún bò dưới 40k")
-        assert res.food_type == "bun_bo"
+        assert res.food_name == "bún bò"
 
     def test_preference_cay(self):
         res = fallback_extract_food("Tìm quán mì cay")
@@ -103,9 +102,17 @@ class TestFallbackExtractFood:
         res = fallback_extract_food("Tìm quán phở không cay")
         assert res.preference == "khong_cay"
 
-    def test_food_group_mon_nuoc(self):
-        res = fallback_extract_food("Tìm món nước ở quận 5")
-        assert res.food_group == "mon_nuoc"
+    @pytest.mark.parametrize("message, dish, place", [
+        ("bánh mì que", "bánh mì que", None),
+        ("Tìm bánh mì que ở quán Cô Ba dưới 30k", "bánh mì que", "Cô Ba"),
+        ("Tìm quán Cô Ba", None, "Cô Ba"),
+        ("Quán Cô Ba bán mì cay 7 cấp độ", "mì cay 7 cấp độ", "Cô Ba"),
+        ("Tìm quán bán bánh mì que", "bánh mì que", None),
+        ("Tăng ngân sách lên 50k", None, None),
+    ])
+    def test_names(self, message, dish, place):
+        result = fallback_extract_food(message)
+        assert (result.food_name, result.place_name) == (dish, place)
 
 
 # ---------------------------------------------------------------------------
@@ -121,13 +128,13 @@ class TestDefaultsAndContext:
         extracted = ExtractedIntent(
             intent="search_food",
             campus="q5",
-            food_type="com_tam",
+            food_name="cơm tấm",
             budget=None,
             radius_m=None,
         )
         ctx = merge_context(previous, extracted)
         assert ctx["campus"] == "q5"
-        assert ctx["food_type"] == "com_tam"
+        assert ctx["food_name"] == "cơm tấm"
         assert ctx["budget"] == DEFAULT_BUDGET          # 30,000 VND
         assert ctx["budget_is_default"] is True
         assert ctx["radius_m"] == DEFAULT_RADIUS_M      # 3,000 mét
@@ -165,7 +172,7 @@ class TestDefaultsAndContext:
         """
         Kiểm tra chính xác kịch bản 3 lượt trong yêu cầu:
         Lượt 1: 'Tìm quán cơm tấm ở Quận 5.'
-          -> food_type = com_tam, campus = q5, budget = 30000 (default), radius_m = 3000 (default)
+          -> food_name = com_tam, campus = q5, budget = 30000 (default), radius_m = 3000 (default)
         Lượt 2: 'Tăng ngân sách lên 50k.'
           -> budget = 50000 (user-provided), các thông tin khác giữ nguyên.
         Lượt 3: 'Tìm trong bán kính 5km.'
@@ -175,12 +182,12 @@ class TestDefaultsAndContext:
         turn1_extracted = ExtractedIntent(
             intent="search_food",
             campus="q5",
-            food_type="com_tam",
+            food_name="cơm tấm",
             budget=None,
             radius_m=None,
         )
         ctx1 = merge_context({}, turn1_extracted)
-        assert ctx1["food_type"] == "com_tam"
+        assert ctx1["food_name"] == "cơm tấm"
         assert ctx1["campus"] == "q5"
         assert ctx1["budget"] == 30000
         assert ctx1["budget_is_default"] is True
@@ -192,11 +199,11 @@ class TestDefaultsAndContext:
             intent="refine_search",
             budget=50000,
             campus=None,
-            food_type=None,
+            food_name=None,
             radius_m=None,
         )
         ctx2 = merge_context(ctx1, turn2_extracted)
-        assert ctx2["food_type"] == "com_tam"           # giữ nguyên
+        assert ctx2["food_name"] == "cơm tấm"           # giữ nguyên
         assert ctx2["campus"] == "q5"                   # giữ nguyên
         assert ctx2["budget"] == 50000                  # cập nhật giá trị mới của user
         assert ctx2["budget_is_default"] is False       # không còn là default
@@ -209,10 +216,10 @@ class TestDefaultsAndContext:
             radius_m=5000,
             budget=None,
             campus=None,
-            food_type=None,
+            food_name=None,
         )
         ctx3 = merge_context(ctx2, turn3_extracted)
-        assert ctx3["food_type"] == "com_tam"           # giữ nguyên
+        assert ctx3["food_name"] == "cơm tấm"           # giữ nguyên
         assert ctx3["campus"] == "q5"                   # giữ nguyên
         assert ctx3["budget"] == 50000                  # giữ nguyên giá trị user đã nhập ở Turn 2
         assert ctx3["budget_is_default"] is False
@@ -227,17 +234,17 @@ class TestDefaultsAndContext:
             "budget_is_default": False,
             "radius_m": 500,
             "radius_is_default": False,
-            "food_type": "pho",
+            "food_name": "phở",
         }
         # Người dùng gửi tin nhắn đổi món: "Đổi sang bún bò" (không nhắc lại budget)
         turn_extracted = ExtractedIntent(
             intent="refine_search",
-            food_type="bun_bo",
+            food_name="bún bò",
             budget=None,
             radius_m=None,
         )
         new_ctx = merge_context(ctx, turn_extracted)
-        assert new_ctx["food_type"] == "bun_bo"
+        assert new_ctx["food_name"] == "bún bò"
         assert new_ctx["budget"] == 60000               # Vẫn là 60000, không bị hạ về 30000 default!
         assert new_ctx["budget_is_default"] is False
         assert new_ctx["radius_m"] == 500               # Vẫn là 500, không bị tăng lên 3000 default!
