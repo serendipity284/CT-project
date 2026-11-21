@@ -68,6 +68,10 @@ Phân tích tin nhắn tiếng Việt (kể cả tiếng lóng, viết tắt) v�
 - "q5": Cơ sở Quận 5 / Nguyễn Văn Cừ / NVC
 - "lang": Làng Đại học / Linh Trung / Thủ Đức
 
+Chỉ trích xuất thay đổi trong tin nhắn hiện tại cho budget và radius_m.
+Nếu người dùng yêu cầu bỏ giới hạn, đặt budget_unlimited hoặc radius_unlimited = true
+cho đúng tiêu chí và để giá trị tương ứng null. Nếu không nhắc tiêu chí, để null và cờ false.
+
 ## TRÍCH XUẤT NGÂN SÁCH (budget)
 Luôn trả về số nguyên VND:
 - "35k" = 35000, "35K" = 35000, "35 K" = 35000
@@ -75,11 +79,11 @@ Luôn trả về số nguyên VND:
 - "35 nghìn" = 35000, "35 ngàn" = 35000
 - "0.5 triệu" = 500000, "1 triệu" = 1000000, "1.5tr" = 1500000
 - "200000" = 200000
-CHÚ Ý: Nếu người dùng không nhắc ngân sách, để null (hệ thống sẽ áp dụng mặc định ở tầng sau).
+CHÚ Ý: Nếu người dùng không nhắc ngân sách, để null (giữ giới hạn người dùng đã đặt, nếu chưa có thì không giới hạn).
 
 ## TRÍCH XUẤT BÁN KÍNH (radius_m)
 - "500m" = 500, "1km" = 1000, "3km" = 3000
-CHÚ Ý: Nếu người dùng không nhắc khoảng cách, để null (hệ thống sẽ áp dụng mặc định ở tầng sau).
+CHÚ Ý: Nếu người dùng không nhắc khoảng cách, để null (giữ giới hạn người dùng đã đặt, nếu chưa có thì không giới hạn).
 
 ## NHẬN DIỆN CẢM XÚC (emotion)
 - "sadness", "stress", "tiredness", "happiness", "celebration", "boredom", "comfort", "neutral"

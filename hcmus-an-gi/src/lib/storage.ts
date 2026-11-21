@@ -12,8 +12,8 @@ export type Review = {
 export type HistoryItem = {
   id: number;
   campus: string;
-  budget: number;
-  radiusM: number;
+  budget: number | null;
+  radiusM: number | null;
   query: string;
   createdAt: string;
 };

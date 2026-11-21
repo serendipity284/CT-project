@@ -276,3 +276,26 @@ class TestChatMultiTurnContext:
             # Cảm xúc stress vẫn được lưu giữ trong background context
             assert data3["emotion"] is not None
             assert data3["emotion"]["category"] == "stress"
+
+
+@pytest.mark.parametrize("offline", [True, False])
+def test_unlimited_filters_survive_followups_and_can_be_replaced(offline):
+    def send(message, previous, **slots):
+        with patch("app.extract_intent", side_effect=RuntimeError("offline") if offline else None,
+                   return_value=ExtractedIntent(**slots)):
+            response = client.post("/chat", json={**previous, "message": message})
+        assert response.status_code == 200
+        return response.json()
+
+    first = send("Hôm nay tôi muốn ăn mì", {}, food_name="mì")
+    both = send("Ở Quận 5, không quan tâm về giá cả hay khoảng cách gì hết", first, campus="q5")
+    assert both["ready"] and both["food_name"] == "mì"
+    assert both["budget"] is None and both["radius_m"] is None
+    assert both["budget_unlimited"] and both["radius_unlimited"]
+    priced = send("Dưới 40k thôi", both, budget=40000)
+    assert priced["budget"] == 40000 and not priced["budget_unlimited"]
+    assert priced["radius_m"] is None and priced["radius_unlimited"]
+    nearby = send("Giá nào cũng được nhưng trong 500m", priced, radius_m=500)
+    assert nearby["radius_m"] == 500 and not nearby["radius_unlimited"]
+    assert nearby["budget"] is None and nearby["budget_unlimited"]
+    assert nearby["food_name"] == "mì" and nearby["campus"] == "q5"
