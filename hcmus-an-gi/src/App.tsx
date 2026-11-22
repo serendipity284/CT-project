@@ -389,31 +389,7 @@ export default function App() {
       .catch(() => setSavedApi([]));
   }, [useApi, user, saved]);
 
-  useEffect(() => {
-  let cancelled = false;
-  const key = user?.id ?? "guest";
-  const autoAsk = () => {
-    if (askedFor.current === key) return;   // tránh hỏi 2 lần (StrictMode)
-    askedFor.current = key;
-    startSurvey(true);
-  };
-  (async () => {
-    if (user && useApi) {
-      try {
-        const p = await fetchPreferenceApi();
-        if (cancelled) return;
-        setPref(p);
-        if (!p.survey_done) autoAsk();
-      } catch { /* token hết hạn */ }
-    } else {
-      const g = getGuestPref();
-      setPref(g ?? DEFAULT_PREFERENCE);
-      if (!g) autoAsk();
-    }
-  })();
-  return () => { cancelled = true; };
-}, [user, useApi]);
-
+ 
   useEffect(() => {
     let cancelled = false;
     const key = user?.id ?? "guest";
