@@ -5,6 +5,7 @@ Chay: uvicorn app:app --reload --port 8000
 
 from __future__ import annotations
 
+import httpx
 import unicodedata
 import math
 import os
@@ -26,6 +27,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 import bcrypt
 from pydantic import BaseModel, EmailStr, Field
+
+import io
+from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageOps
 
 from menu_scan import scan_menu_images
 from starlette.concurrency import run_in_threadpool
@@ -78,6 +83,125 @@ app.add_middleware(
 )
 from routers.heana import router as heana_router
 app.include_router(heana_router, prefix="/api/heana")
+
+# ---------------------------------------------------------------- avatar
+UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
+AVATAR_DIR = UPLOAD_DIR / "avatars"
+AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
+
+@app.on_event("startup")
+def ensure_avatar_column():
+    """Tự thêm cột users.avatar_url nếu DB cũ chưa có."""
+    try:
+        conn = mysql.connector.connect(**MYSQL)
+    except mysql.connector.Error:
+        return
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='users' AND COLUMN_NAME='avatar_url'",
+            (MYSQL["database"],),
+        )
+        if cur.fetchone()[0] == 0:
+            cur.execute("ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500) NULL AFTER name")
+            conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _public_user(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["name"],
+        "avatar_url": row.get("avatar_url"),
+    }
+
+
+def _save_avatar_file(raw: bytes, user_id: str) -> str:
+    """Mở lại bằng Pillow (chặn file giả ảnh), cắt vuông 256x256, lưu JPEG."""
+    img = Image.open(io.BytesIO(raw))
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    img = ImageOps.fit(img, (256, 256), Image.LANCZOS)
+    name = f"{user_id}_{int(time.time())}.jpg"
+    img.save(AVATAR_DIR / name, "JPEG", quality=88)
+    return f"/uploads/avatars/{name}"
+
+
+def _delete_avatar_file(url: Optional[str]):
+    if url and url.startswith("/uploads/avatars/"):
+        try:
+            (AVATAR_DIR / Path(url).name).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+@app.get("/users/me")
+def get_me(user: dict = Depends(current_user)):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id, email, name, avatar_url FROM users WHERE id=%s", (user["id"],))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Khong tim thay tai khoan")
+        return _public_user(row)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/users/me/avatar")
+async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(current_user)):
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(400, "Chi nhan file anh")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "File anh rong")
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Anh toi da 5MB")
+    try:
+        new_url = await run_in_threadpool(_save_avatar_file, raw, user["id"])
+    except Exception:
+        raise HTTPException(400, "Khong doc duoc file anh (jpeg/png/webp)")
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT avatar_url FROM users WHERE id=%s", (user["id"],))
+        old = (cur.fetchone() or {}).get("avatar_url")
+        cur.execute("UPDATE users SET avatar_url=%s WHERE id=%s", (new_url, user["id"]))
+        conn.commit()
+        cur.execute("SELECT id, email, name, avatar_url FROM users WHERE id=%s", (user["id"],))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+    _delete_avatar_file(old)
+    return {"ok": True, "user": _public_user(row)}
+
+
+@app.delete("/users/me/avatar")
+def reset_avatar(user: dict = Depends(current_user)):
+    """Về avatar mặc định."""
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT avatar_url FROM users WHERE id=%s", (user["id"],))
+        old = (cur.fetchone() or {}).get("avatar_url")
+        cur.execute("UPDATE users SET avatar_url=NULL WHERE id=%s", (user["id"],))
+        conn.commit()
+        cur.execute("SELECT id, email, name, avatar_url FROM users WHERE id=%s", (user["id"],))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+    _delete_avatar_file(old)
+    return {"ok": True, "user": _public_user(row)}
 
 # ---------------------------------------------------------------- dinh vi dia chi
 GEO_UA = "hcmus-an-gi/1.0 (student project)"
@@ -345,7 +469,7 @@ def signup(body: SignUpIn):
         token = make_token(uid, body.email.lower())
         return {
             "token": token,
-            "user": {"id": uid, "email": body.email.lower(), "name": body.name.strip()},
+            "user": {"id": uid, "email": body.email.lower(), "name": body.name.strip(), "avatar_url": None},
         }
     finally:
         cur.close()
@@ -364,12 +488,79 @@ def login(body: LoginIn):
         token = make_token(row["id"], row["email"])
         return {
             "token": token,
-            "user": {"id": row["id"], "email": row["email"], "name": row["name"]},
+            "user": """{"id": row["id"], "email": row["email"], "name": row["name"]}""" _public_user(row),
         }
     finally:
         cur.close()
         conn.close()
 
+GOOGLE_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
+
+
+def _find_google_place_id(name: str, address: str, lat: float, lng: float) -> Optional[str]:
+    r = httpx.post(
+        "https://places.googleapis.com/v1/places:searchText",
+        headers={"X-Goog-Api-Key": GOOGLE_KEY, "X-Goog-FieldMask": "places.id"},
+        json={
+            "textQuery": f"{name} {address}",
+            "languageCode": "vi",
+            "locationBias": {"circle": {"center": {"latitude": lat, "longitude": lng}, "radius": 200.0}},
+        },
+        timeout=8,
+    )
+    r.raise_for_status()
+    places = r.json().get("places") or []
+    return places[0]["id"] if places else None
+
+
+@app.get("/places/{place_id}/google-reviews")
+def google_reviews(place_id: int):
+    if not GOOGLE_KEY:
+        raise HTTPException(503, "Chua cau hinh GOOGLE_MAPS_API_KEY")
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT name, address, lat, lng, google_place_id FROM places WHERE id=%s", (place_id,))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(404, "Khong tim thay quan")
+        gid = p["google_place_id"]
+        if not gid:
+            gid = _find_google_place_id(p["name"], p["address"].split(" | ")[0], float(p["lat"]), float(p["lng"]))
+            if not gid:
+                return {"found": False, "reviews": []}
+            cur.execute("UPDATE places SET google_place_id=%s WHERE id=%s", (gid, place_id))
+            conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    r = httpx.get(
+        f"https://places.googleapis.com/v1/places/{gid}",
+        headers={
+            "X-Goog-Api-Key": GOOGLE_KEY,
+            "X-Goog-FieldMask": "rating,userRatingCount,googleMapsUri,reviews",
+        },
+        params={"languageCode": "vi"},
+        timeout=8,
+    )
+    r.raise_for_status()
+    d = r.json()
+    return {
+        "found": True,
+        "rating": d.get("rating"),
+        "count": d.get("userRatingCount"),
+        "url": d.get("googleMapsUri"),
+        "reviews": [
+            {
+                "author": (x.get("authorAttribution") or {}).get("displayName"),
+                "rating": x.get("rating"),
+                "when": x.get("relativePublishTimeDescription"),
+                "text": ((x.get("text") or {}).get("text")),
+            }
+            for x in d.get("reviews", [])
+        ],
+    }
 
 @app.get("/places")
 def list_places(
