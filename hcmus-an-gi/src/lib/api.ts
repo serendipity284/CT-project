@@ -298,3 +298,8 @@ export const saveSurveyApi = (a: SurveyAnswers) =>
   req<UserPreference>("/api/heana/onboarding", { method: "POST", body: JSON.stringify(a) });
 
 export const fetchPreferenceApi = () => req<UserPreference>("/api/heana/preferences");
+
+export const fetchGoogleReviews = (placeId: number) =>
+  req<{ found: boolean; rating?: number; count?: number; url?: string;
+        reviews: { author: string; rating: number; when: string; text: string }[] }>(
+    `/places/${placeId}/google-reviews`);
