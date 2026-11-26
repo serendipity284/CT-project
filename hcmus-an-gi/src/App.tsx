@@ -1883,9 +1883,9 @@ function LoginPage({
         </button>
         <h1 className="title">HCMUS Ăn Gì</h1>
         <p className="muted">
-          {useApi
+          {/* {useApi
             ? "Tài khoản lưu trên MySQL qua API Python."
-            : "Chế độ offline — tài khoản chỉ trên trình duyệt này."}
+            : "Chế độ offline — tài khoản chỉ trên trình duyệt này."} */}
         </p>
         <form className="stack" onSubmit={submit}>
           {mode === "up" && (
