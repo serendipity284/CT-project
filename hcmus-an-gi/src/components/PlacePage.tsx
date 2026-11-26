@@ -1,10 +1,11 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { CampusMap } from "./CampusMap";
 import { CAMPUSES, walkMinutes, type CampusId } from "../lib/campuses";
 import { mapsPinUrl, mapsSearchUrl } from "../lib/maps";
 import type { Place } from "../lib/places-data";
 import type { Review } from "../lib/storage";
+import { apiEnabled, fetchGoogleReviews } from "../lib/api";
 
 export type PlaceMode = "detail" | "route";
 
@@ -26,6 +27,53 @@ type Props = {
   onSwitch: (m: PlaceMode) => void;
   onBigMap: () => void;
 };
+
+type GData = Awaited<ReturnType<typeof fetchGoogleReviews>>;
+
+function GoogleReviews({ placeId }: { placeId: number }) {
+  const [data, setData] = useState<GData | null>(null);
+  const [status, setStatus] = useState<"loading" | "ok" | "err">("loading");
+
+  useEffect(() => {
+    if (!apiEnabled()) return;
+    let cancelled = false;
+    setStatus("loading");
+    fetchGoogleReviews(placeId)
+      .then((d) => { if (!cancelled) { setData(d); setStatus("ok"); } })
+      .catch(() => { if (!cancelled) setStatus("err"); });
+    return () => { cancelled = true; };
+  }, [placeId]);
+
+  if (!apiEnabled()) return null;
+  return (
+    <>
+      <h3 className="hx-page-h3">Đánh giá từ Google</h3>
+      {status === "loading" && <p className="hx-muted">Đang tải…</p>}
+      {status === "err" && <p className="hx-muted">Không tải được đánh giá Google.</p>}
+      {status === "ok" && data && !data.found && (
+        <p className="hx-muted">Không tìm thấy quán này trên Google Maps.</p>
+      )}
+      {status === "ok" && data?.found && (
+        <>
+          <p className="hx-page-sub">
+            <span>{data.rating?.toFixed(1)}/5 ★ · {data.count} lượt</span>
+          </p>
+          {data.reviews.map((r, i) => (
+            <p key={i} className="hx-review-line">
+              <strong>{r.author}</strong> · {r.rating}/5 · {r.when}
+              {r.text ? ` — ${r.text}` : ""}
+            </p>
+          ))}
+          {data.url && (
+            <a className="hx-muted" target="_blank" rel="noreferrer" href={data.url}>
+              Nguồn: Google Maps
+            </a>
+          )}
+        </>
+      )}
+    </>
+  );
+}
 
 /** Trang riêng của 1 quán: "Chi tiết" hoặc "Chỉ đường" (mở từ popup trong chat). */
 export function PlacePage({
@@ -67,6 +115,7 @@ export function PlacePage({
                 <strong>{r.authorName}</strong> · {r.rating}/5 — {r.body}
               </p>
             ))}
+            <GoogleReviews placeId={place.id} />
           </div>
         ) : (
           <div className="hx-page-body hx-route-body">

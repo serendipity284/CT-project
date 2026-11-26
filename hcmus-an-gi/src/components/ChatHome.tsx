@@ -34,7 +34,7 @@ type Props = {
 function BotAvatar() {
   return (
     <svg className="hx-avatar" viewBox="0 0 80 44" aria-hidden="true">
-      <rect width="80" height="44" fill="#fff" />
+      {/* <rect width="80" height="44" fill="#fff" /> */}
       {/* muỗng */}
       <ellipse cx="9" cy="12" rx="4" ry="5.5" fill="none" stroke="#6b4129" strokeWidth="2" />
       <path d="M9 18v20" stroke="#6b4129" strokeWidth="2.4" strokeLinecap="round" />

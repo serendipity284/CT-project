@@ -10,3 +10,4 @@ google-genai>=1.0.0
 email-validator
 python-multipart>=0.0.9
 firebase-admin
+Pillow>=10.0.0
