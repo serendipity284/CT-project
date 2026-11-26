@@ -22,7 +22,7 @@ from pathlib import Path
 
 import mysql.connector
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 import bcrypt
@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 
 from menu_scan import scan_menu_images
+from services.ingredient_analyzer import analyze_dishes_background
 from starlette.concurrency import run_in_threadpool
 from rate_limit import (
     check_contribute_allowed,
@@ -1295,6 +1296,7 @@ class ContributeWithMenuIn(BaseModel):
 def contribute_with_menu(
     body: ContributeWithMenuIn,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(verified_user),
 ):
     """Tao quan + luu danh sach mon (sau khi user xac nhan ket qua OCR)."""
@@ -1346,7 +1348,9 @@ def contribute_with_menu(
             )
             place_id = cur.lastrowid
 
+            missing_ingredient_ids = []
             for d in body.dishes[:150]:
+                ingredients = _clean_ings(d.ingredients)
                 cur.execute(
                     "INSERT INTO dishes (place_id, name, price, ingredients, description, image_url) "
                     "VALUES (%s,%s,%s,%s,%s,%s)",
@@ -1354,16 +1358,20 @@ def contribute_with_menu(
                         place_id,
                         d.name.strip()[:180],
                         d.price if d.price is not None else 0,
-                        json.dumps(_clean_ings(d.ingredients), ensure_ascii=False),
+                        json.dumps(ingredients, ensure_ascii=False),
                         (d.note or d.category or "").strip()[:300] or None,
                         None,
                     ),
                 )
+                if not ingredients:
+                    missing_ingredient_ids.append(cur.lastrowid)
             mm = body.menu_meta
             if mm and mm.hours:
                 cur.execute("UPDATE places SET hours_text = %s WHERE id = %s", (mm.hours.strip()[:80], place_id))
             conn.commit()
             record_contribute(user["id"], ip or "unknown")
+            if missing_ingredient_ids:
+                background_tasks.add_task(analyze_dishes_background, missing_ingredient_ids)
             return {
                 "ok": True,
                 "id": place_id,
