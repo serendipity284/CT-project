@@ -101,6 +101,8 @@ app.add_middleware(
 )
 from routers.heana import router as heana_router
 app.include_router(heana_router, prefix="/api/heana")
+from routers.alley import router as alley_router
+app.include_router(alley_router, prefix="/api/heana")
 
 # ---------------------------------------------------------------- avatar
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
@@ -157,6 +159,16 @@ def _delete_avatar_file(url: Optional[str]):
         except OSError:
             pass
 
+
+def current_user(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Can dang nhap")
+    token = authorization[7:].strip()
+    try:
+        data = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return {"id": data["sub"], "email": data.get("email", "")}
+    except JWTError:
+        raise HTTPException(401, "Token khong hop le")
 
 @app.get("/users/me")
 def get_me(user: dict = Depends(current_user)):

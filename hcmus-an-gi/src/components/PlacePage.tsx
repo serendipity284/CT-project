@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { CampusMap } from "./CampusMap";
 import { CAMPUSES, walkMinutes, type CampusId } from "../lib/campuses";
@@ -6,6 +6,13 @@ import { mapsPinUrl, mapsSearchUrl } from "../lib/maps";
 import type { Place } from "../lib/places-data";
 import type { Review } from "../lib/storage";
 import { apiEnabled, fetchGoogleReviews } from "../lib/api";
+import AlleyDirections from "./AlleyDirections";
+import AlleyContribute from "./AlleyContribute";
+import type { Directions } from "../lib/alleyApi";
+import { getApiUser } from "../lib/api";
+import type { UserLocation } from "../lib/useUserLocation";  
+import { walkMinutesFromMeters } from "../lib/geo";   
+
 
 export type PlaceMode = "detail" | "route";
 
@@ -17,6 +24,7 @@ type Props = {
   reviews: Review[];
   /** Khối thông tin chi tiết (món, giá, giờ, địa chỉ, menu…) do App cung cấp */
   info: ReactNode;
+  loc: UserLocation;
   route: {
     coords: [number, number][];
     meta: { distanceM: number; durationSec: number } | null;
@@ -77,9 +85,22 @@ function GoogleReviews({ placeId }: { placeId: number }) {
 
 /** Trang riêng của 1 quán: "Chi tiết" hoặc "Chỉ đường" (mở từ popup trong chat). */
 export function PlacePage({
-  mode, place, campus, rating, reviews, info, route, onBack, onSwitch, onBigMap,
+  mode, place, campus, rating, reviews, info, route, loc, onBack, onSwitch, onBigMap,
 }: Props) {
   const origin = CAMPUSES[campus];
+  const [alley, setAlley] = useState<Directions | null>(null);
+  const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => { setAlley(null); setShowForm(false); }, [place.id]);
+
+// Ghép chặng 1 (OSRM) + chặng 2 (các điểm mốc trong hẻm) thành một đường cho CampusMap
+  const mapCoords = useMemo<[number, number][]>(() => {
+    if (!alley) return route.coords;
+    const s1 = alley.stage1_polyline as [number, number][];
+    const s2 = alley.stage2.map((s) => [s.lng, s.lat] as [number, number]);
+    const all = [...s1, ...s2];
+    return all.length >= 2 ? all : route.coords;
+  }, [alley, route.coords]);
   return (
     <div className="hx-app">
       <header className="hx-header">
@@ -124,23 +145,47 @@ export function PlacePage({
               {!route.loading && route.meta && (
                 <span>
                   Đi bộ khoảng <strong>{route.meta.distanceM} m</strong> ·{" "}
-                  <strong>{Math.max(1, Math.round(route.meta.durationSec / 60))} phút</strong>
+                  <strong>{walkMinutesFromMeters(route.meta.distanceM)} phút</strong>
                 </span>
               )}
               {route.error && <span className="hx-muted">{route.error}</span>}
             </p>
+          <div className="loc-bar">
+            <button type="button" className="alley-btn" onClick={() => void loc.request()}
+              disabled={loc.status === "loading"}>
+              {loc.status === "loading" ? "Đang lấy vị trí…" : "📍 Dùng vị trí của tôi"}
+            </button>
+            {loc.status === "gps" && <span>Đang tính từ vị trí của bạn.</span>}
+            {loc.status === "fallback" && <span className="hx-muted">Không lấy được GPS — tính từ {loc.origin.label}.</span>}
+            {loc.status === "gps" && <button type="button" className="alley-link" onClick={loc.reset}>Về cổng trường</button>}
+          </div>
             <div className="hx-bigmap">
               <CampusMap
                 campus={campus}
                 places={[place]}
                 activeId={place.id}
-                routeCoords={route.coords}
+                routeCoords={mapCoords}
                 onPick={() => {}}
               />
             </div>
+            {apiEnabled() && (
+              <>
+                <AlleyDirections
+                  placeId={place.id}
+                  origin={loc.origin}
+                  onResult={(d) => setAlley(d)}
+                  onNoData={() => setShowForm(true)}
+                />
+                {showForm && (getApiUser() ? (
+                  <AlleyContribute placeId={place.id} campus={campus} onDone={() => setShowForm(false)} />
+                ) : (
+                  <p className="hx-muted">Đăng nhập để đóng góp đường đi trong hẻm.</p>
+                ))}
+              </>
+            )}
             <div className="hx-links">
               <a target="_blank" rel="noreferrer"
-                href={`https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${place.lat},${place.lng}&travelmode=walking`}>
+                href={`https://www.google.com/maps/dir/?api=1&origin=${loc.origin.lat},${loc.origin.lng}&destination=${place.lat},${place.lng}&travelmode=walking`}>
                 Mở Google Maps
               </a>
               <a target="_blank" rel="noreferrer" href={mapsSearchUrl(place.address)}>Theo địa chỉ</a>

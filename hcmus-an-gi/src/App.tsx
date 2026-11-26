@@ -13,6 +13,7 @@ import { replyFor, type ChatTurn, type Intent } from "./lib/chat-intent";
 import type { Place } from "./lib/places-data";
 import { generatePlaces, initialPlaces } from "./lib/places-generator";
 import { fetchWalkingRoute } from "./lib/routing";
+import { useUserLocation } from "./lib/useUserLocation";
 
 import {
   apiEnabled, 
@@ -120,6 +121,7 @@ export default function App() {
   const [saved, setSaved] = useState<number[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [campus, setCampus] = useState<CampusId>("q5");
+  const userLoc = useUserLocation(campus);
   const [budget, setBudget] = useState<number | null>(null);
   const [radius, setRadius] = useState<number | null>(null);
   const [onlySaved, setOnlySaved] = useState(false);
@@ -349,7 +351,7 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    const origin = CAMPUSES[campus];
+    const origin = userLoc.origin;
     setRouteLoading(true);
     setRouteError("");
     fetchWalkingRoute(origin.lat, origin.lng, active.lat, active.lng).then((r) => {
@@ -371,7 +373,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [active?.id, campus, active?.lat, active?.lng]);
+  }, [active?.id, campus, active?.lat, active?.lng, userLoc.origin.lat, userLoc.origin.lng]);
 
   useEffect(() => {
     const empty: ApiPlaceInfo = { dishes: [], menu_meta: null };
@@ -1062,6 +1064,7 @@ export default function App() {
             route={{ coords: routeCoords, meta: routeMeta, loading: routeLoading, error: routeError }}
             onBack={() => setScreen("chat")}
             onSwitch={setPlaceMode}
+            loc={userLoc}
             onBigMap={() => {
               setTab("list");
               setScreen("classic");
@@ -1691,7 +1694,7 @@ export default function App() {
                 className="chip"
                 target="_blank"
                 rel="noreferrer"
-                href={`https://www.google.com/maps/dir/?api=1&origin=${CAMPUSES[campus].lat},${CAMPUSES[campus].lng}&destination=${active.lat},${active.lng}&travelmode=walking`}
+                href={`https://www.google.com/maps/dir/?api=1&origin=${userLoc.origin.lat},${userLoc.origin.lng}&destination=${active.lat},${active.lng}&travelmode=walking`}
               >
                 Chỉ đường Google Maps (tab mới)
               </a>{" "}

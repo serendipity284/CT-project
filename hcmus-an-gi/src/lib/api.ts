@@ -17,7 +17,7 @@ function authHeaders(): HeadersInit {
     : { "Content-Type": "application/json" };
 }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+export async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: { ...authHeaders(), ...(init?.headers ?? {}) },
@@ -313,6 +313,12 @@ export const saveSurveyApi = (a: SurveyAnswers) =>
 export const fetchPreferenceApi = () => req<UserPreference>("/api/heana/preferences");
 
 export const fetchGoogleReviews = (placeId: number) =>
-  req<{ found: boolean; rating?: number; count?: number; url?: string;
-        reviews: { author: string; rating: number; when: string; text: string }[] }>(
-    `/places/${placeId}/google-reviews`);
+  req<{
+    found: boolean;
+    rating?: number;
+    count?: number;
+    url?: string;
+    reviews: { author: string; rating: number; when: string; text: string }[];
+  }>(`/places/${placeId}/google-reviews`);
+
+  
