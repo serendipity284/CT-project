@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime
 from typing import Any, Optional
-
+from services.alley_routing import build_alley_route
 from fastapi import APIRouter, Depends, HTTPException, Header
 from jose import JWTError, jwt
 
@@ -299,26 +299,34 @@ def search_places(
     )
 
 
+def fetch_place_by_id(place_id: int) -> Optional[dict]:
+    conn = get_db_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT * FROM places WHERE id=%s AND is_active=1", (place_id,))
+        return cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+
+
 @router.post("/directions", response_model=DirectionsResponse)
 def get_directions(body: DirectionsRequest):
     """
     Dẫn đường 2 chặng:
-    - Stage 1: GPS → Alley Entrance (OSRM - gọi external)
-    - Stage 2: Landmark steps trong hẻm (Dijkstra trên alley_graph)
+    - Stage 1: GPS → Alley Entrance (OSRM)
+    - Stage 2: Landmark steps trong hẻm (Dijkstra trên alley graph)
     """
-    # Lấy thông tin quán
-    places = fetch_places()
-    place = next((p for p in places if p["id"] == body.place_id), None)
+    place = fetch_place_by_id(body.place_id)
     if not place:
         raise HTTPException(404, "Không tìm thấy quán.")
 
-    # Stage 2: Alley graph
     graph = fetch_alley_graph_for_place(body.place_id)
     alley_result = build_alley_route(graph, body.place_id)
 
-    stage2_steps = []
-    stage2_total = 0.0
     has_alley = alley_result.found
+    stage2_steps: list[RouteStepOut] = []
+    stage2_total = 0.0
     if has_alley:
         stage2_total = alley_result.total_distance_m
         stage2_steps = [
@@ -335,17 +343,17 @@ def get_directions(body: DirectionsRequest):
             for s in alley_result.steps
         ]
 
-    # Stage 1: đến cổng hẻm (hoặc đến quán nếu không có alley data)
-    target_lat = place.get("alley_entrance_lat") or place["lat"]
-    target_lng = place.get("alley_entrance_lng") or place["lng"]
+    # Đích chặng 1: cổng hẻm của tuyến tốt nhất; không có thì cổng lưu trong places; không có nữa thì quán
     if has_alley and alley_result.entrance_node:
         target_lat = alley_result.entrance_node.lat
         target_lng = alley_result.entrance_node.lng
+    else:
+        target_lat = float(place.get("alley_entrance_lat") or place["lat"])
+        target_lng = float(place.get("alley_entrance_lng") or place["lng"])
 
-    # Gọi OSRM (public)
     import urllib.request
-    import urllib.parse
-    stage1_poly = []
+
+    stage1_poly: list = []
     stage1_dist = 0.0
     stage1_dur = 0.0
     try:
@@ -357,17 +365,18 @@ def get_directions(body: DirectionsRequest):
         req = urllib.request.Request(url, headers={"User-Agent": "heana/1.0"})
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode())
-        route = data.get("routes", [None])[0]
+        route = (data.get("routes") or [None])[0]
         if route:
             stage1_poly = route["geometry"]["coordinates"]
             stage1_dist = route["distance"]
-            stage1_dur = route["duration"]
+            stage1_dur = route["distance"] / 1.33
     except Exception:
         pass
 
     msg = ""
     if not has_alley:
-        msg = "Quán chưa có dữ liệu dẫn đường trong hẻm. Chỉ hiển thị đường đến vị trí quán."
+        msg = alley_result.message or "Quán chưa có dữ liệu dẫn đường trong hẻm."
+        msg += " Chỉ hiển thị đường đến vị trí quán."
     elif not stage1_poly:
         msg = "Không lấy được đường GPS. Vẫn có hướng dẫn từng bước trong hẻm."
 

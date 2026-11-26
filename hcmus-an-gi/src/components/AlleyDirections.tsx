@@ -1,121 +1,80 @@
-/**
- * HEANA 2-Stage Directions UI
- * Stage 1: GPS route to alley entrance
- * Stage 2: Landmark step-by-step inside the alley
- */
+import { useEffect, useState } from 'react';
+import type { Origin } from '../lib/geo';
+import { walkMinutesFromMeters } from '../lib/geo';
+import { fetchDirections, type Directions } from '../lib/alleyApi';
 
-import type { DirectionsResult, RouteStep } from "../lib/heana-types";
+type Props = {
+  placeId: number;
+  /** Điểm xuất phát (GPS hoặc cổng trường) — đổi là tự tính lại */
+  origin: Origin;
+  onResult?: (d: Directions | null) => void; // để PlacePage vẽ đường lên bản đồ
+  onNoData?: () => void; // mở form đóng góp
+};
 
-interface Props {
-  data: DirectionsResult;
-  onClose?: () => void;
-}
+export function AlleyDirections({ placeId, origin, onResult, onNoData }: Props) {
+  const [data, setData] = useState<Directions | null>(null);
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
 
-function StageBadge({ n, label }: { n: number; label: string }) {
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setErr('');
+    fetchDirections(placeId, origin)
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+        onResult?.(d);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setData(null);
+        onResult?.(null);
+        setErr(e instanceof Error ? e.message : 'Không lấy được chỉ đường');
+      })
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeId, origin.lat, origin.lng]);
+
+  if (loading && !data) return <p className="alley-note">Đang tìm đường…</p>;
+  if (err) return <p className="alley-error">{err}</p>;
+  if (!data) return null;
+
   return (
-    <div className="mb-2 flex items-center gap-2">
-      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500 text-xs font-bold text-white">
-        {n}
-      </span>
-      <span className="text-sm font-semibold text-gray-800">{label}</span>
-    </div>
-  );
-}
-
-function StepCard({ step, index }: { step: RouteStep; index: number }) {
-  return (
-    <div className="flex gap-3 rounded-xl border border-gray-100 bg-white p-3 shadow-sm">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-bold text-gray-600">
-        {index}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
-          <p className="text-sm font-medium text-gray-900">{step.node_name}</p>
-          {step.distance_m > 0 && (
-            <span className="shrink-0 text-xs text-gray-400">{Math.round(step.distance_m)}m</span>
+    <section className="alley-dir">
+      <h4 className="alley-h">Từ {origin.source === 'gps' ? 'vị trí của bạn' : origin.label} đến cổng hẻm</h4>
+      <p>
+        {data.stage1_polyline.length
+          ? `${data.stage1_distance_m} m · khoảng ${walkMinutesFromMeters(data.stage1_distance_m)} phút đi bộ`
+          : 'Chưa vẽ được đường đến cổng hẻm.'}
+      </p>
+      <h4 className="alley-h">Trong hẻm ({data.stage2_total_m} m)</h4>
+      {data.has_alley_data ? (
+        <ol className="alley-steps">
+          {data.stage2.map((s) => (
+            <li key={s.node_id} className={`alley-step alley-${s.node_type}`}>
+              <strong>{s.node_name}</strong>
+              <span>{s.instruction}</span>
+              {s.distance_m > 0 && <em>{Math.round(s.distance_m)} m</em>}
+              {s.image_url && <img src={s.image_url} alt={s.node_name} loading="lazy" />}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="alley-note">
+          Quán này chưa có hướng dẫn đi trong hẻm.{' '}
+          {onNoData && (
+            <button type="button" className="alley-link" onClick={onNoData}>
+              Bạn biết đường? Đóng góp
+            </button>
           )}
-        </div>
-        <p className="mt-0.5 text-xs text-gray-600">{step.instruction}</p>
-        {step.image_url && (
-          <img
-            src={step.image_url}
-            alt={step.node_name}
-            className="mt-2 h-24 w-full rounded-lg object-cover"
-          />
-        )}
-        <span className="mt-1 inline-block rounded bg-gray-50 px-1.5 py-0.5 text-[10px] uppercase text-gray-400">
-          {step.node_type}
-        </span>
-      </div>
-    </div>
+        </p>
+      )}
+    </section>
   );
 }
 
-export function AlleyDirections({ data, onClose }: Props) {
-  const walkMin1 = Math.max(1, Math.round(data.stage1_duration_sec / 60));
-  const walkMin2 = Math.max(1, Math.round(data.stage2_total_m / 75));
-
-  return (
-    <div className="flex h-full flex-col bg-gray-50">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b bg-white px-4 py-3">
-        <div>
-          <h2 className="text-base font-semibold text-gray-900">Chỉ đường</h2>
-          <p className="text-xs text-gray-500">{data.place_name}</p>
-        </div>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
-          >
-            Đóng
-          </button>
-        )}
-      </div>
-
-      <div className="flex-1 space-y-5 overflow-y-auto p-4">
-        {/* Stage 1 */}
-        <section>
-          <StageBadge n={1} label="Đường chính → Cổng hẻm" />
-          <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-3">
-            <p className="text-sm text-gray-700">
-              Đi bộ khoảng <strong>{Math.round(data.stage1_distance_m)}m</strong> (
-              ~{walkMin1} phút) đến cổng hẻm.
-            </p>
-            {data.stage1_polyline.length === 0 && (
-              <p className="mt-1 text-xs text-amber-600">
-                Không lấy được polyline GPS. Hãy dùng bản đồ để đi đến vị trí cổng hẻm.
-              </p>
-            )}
-          </div>
-        </section>
-
-        {/* Stage 2 */}
-        <section>
-          <StageBadge n={2} label="Trong hẻm – Từng bước theo điểm mốc" />
-          {data.has_alley_data && data.stage2.length > 0 ? (
-            <>
-              <p className="mb-3 text-xs text-gray-500">
-                Tổng đoạn trong hẻm: ~{Math.round(data.stage2_total_m)}m ({walkMin2} phút)
-              </p>
-              <div className="space-y-2">
-                {data.stage2.map((step, i) => (
-                  <StepCard key={step.node_id} step={step} index={i} />
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="rounded-xl border border-dashed border-gray-200 bg-white p-4 text-center text-sm text-gray-500">
-              {data.message || "Quán chưa có dữ liệu dẫn đường chi tiết trong hẻm."}
-            </div>
-          )}
-        </section>
-
-        {data.message && data.has_alley_data && (
-          <p className="text-center text-xs text-gray-400">{data.message}</p>
-        )}
-      </div>
-    </div>
-  );
-}
+export default AlleyDirections;

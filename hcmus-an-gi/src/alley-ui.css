@@ -1,0 +1,16 @@
+.alley-dir, .alley-form { display: grid; gap: 8px; margin: 12px 0; font-size: 14px; }
+.alley-h { margin: 8px 0 0; font-size: 14px; font-weight: 600; }
+.alley-btn { padding: 10px 14px; border: 0; border-radius: 10px; background: var(--hx-accent, #e4572e); color: #fff; font-weight: 600; cursor: pointer; }
+.alley-btn:disabled { opacity: .6; cursor: default; }
+.alley-link { background: none; border: 0; padding: 0; color: var(--hx-accent, #e4572e); text-decoration: underline; cursor: pointer; font: inherit; }
+.alley-note { margin: 0; opacity: .75; }
+.alley-error { margin: 0; color: #c0392b; }
+.alley-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.alley-step { display: grid; gap: 2px; padding: 8px 10px; border-left: 3px solid #bbb; background: rgba(127,127,127,.08); border-radius: 6px; }
+.alley-step.alley-entrance { border-color: #2e86e4; }
+.alley-step.alley-eatery { border-color: var(--hx-accent, #e4572e); }
+.alley-step em { opacity: .6; font-style: normal; font-size: 12px; }
+.alley-step img { max-width: 100%; border-radius: 6px; margin-top: 4px; }
+.alley-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.alley-row input { flex: 1 1 120px; min-width: 0; }
+.alley-form input, .alley-form select { padding: 8px; border: 1px solid #ccc; border-radius: 8px; font: inherit; }
