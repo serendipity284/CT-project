@@ -12,8 +12,8 @@ export type Review = {
 export type HistoryItem = {
   id: number;
   campus: string;
-  budget: number;
-  radiusM: number;
+  budget: number | null;
+  radiusM: number | null;
   query: string;
   createdAt: string;
 };
@@ -187,4 +187,13 @@ export function getGuestPref(): UserPreference | null {
 }
 export function setGuestPref(p: UserPreference) {
   write(K.guestPref, p);
+}
+export function isSurveySkipped(key: string): boolean {
+  return read<Record<string, boolean>>("hcmus_survey_skipped", {})[key] === true;
+}
+
+export function setSurveySkipped(key: string) {
+  const all = read<Record<string, boolean>>("hcmus_survey_skipped", {});
+  all[key] = true;
+  write("hcmus_survey_skipped", all);
 }

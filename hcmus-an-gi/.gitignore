@@ -5,3 +5,14 @@ dist
 *.log
 .venv
 __pycache__
+
+venv/
+**/venv/
+node_modules/
+.env
+**/.env
+
+serviceAccount.json
+**/serviceAccount*.json
+**/*firebase-adminsdk*.json
+Add-Content -Path .gitignore -Value "`nnode_modules/`nvenv/`n.env`n__pycache__/" -Encoding UTF8

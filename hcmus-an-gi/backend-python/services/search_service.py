@@ -1,13 +1,13 @@
 """
 HEANA Search Service - Orchestrates Hard Filter + Soft Ranking + Preference
 """
+
 from __future__ import annotations
-import re
 
 from datetime import datetime
+import re
 from typing import Any, Optional
 
-from services.ingredient_names import canonical_ingredients
 from services.ranking import (
     DishCandidate,
     PlaceCandidate,
@@ -16,34 +16,31 @@ from services.ranking import (
     suggest_relaxation,
 )
 
-FACTORS = ("price", "distance", "quality")
-W_PRIMARY, W_SECONDARY, W_REST, W_FRESH = 0.45, 0.32, 0.15, 0.05
-
-
 def preference_from_choices(q1: str, q2: Optional[str], allergies_text: str) -> UserPreference:
-    """Khảo sát mới: Q1 = miền ưu tiên nhất, Q2 = miền phụ, Q3 = dị ứng."""
-    if q1 not in FACTORS:  # "any" -> chia đều
-        each = (1 - W_FRESH) / 3
-        w = {f: each for f in FACTORS}
+    FACTORS = ["price", "distance", "quality"]
+    PRIMARY, SECONDARY, REST, FRESH = 0.45, 0.32, 0.15, 0.05
+
+    if q1 == "any":
+        w = {f: (1 - FRESH) / 3 for f in FACTORS}
     else:
         others = [f for f in FACTORS if f != q1]
-        if q2 in others:
-            rest = next(f for f in others if f != q2)
-            w = {q1: W_PRIMARY, q2: W_SECONDARY, rest: W_REST}
-        else:  # Q2 = "sao cũng được"
-            half = (1 - W_FRESH - W_PRIMARY) / 2
-            w = {q1: W_PRIMARY, others[0]: half, others[1]: half}
+        w = {q1: PRIMARY}
+        if q2 and q2 != "any" and q2 in others:
+            w[q2] = SECONDARY
+            w[next(f for f in others if f != q2)] = REST
+        else:
+            half = (1 - FRESH - PRIMARY) / 2
+            for f in others:
+                w[f] = half
 
     allergies = [a.strip().lower() for a in re.split(r"[,;\n]", allergies_text or "") if a.strip()]
     return UserPreference(
         w_price=round(w["price"], 3),
         w_distance=round(w["distance"], 3),
         w_quality=round(w["quality"], 3),
-        w_freshness=W_FRESH,
+        w_freshness=FRESH,
         allergies=allergies,
-        survey_done=True,
     )
-
 def rows_to_candidates(
     place_rows: list[dict],
     dish_rows: list[dict],
@@ -68,7 +65,7 @@ def rows_to_candidates(
                 dish_id=d["id"],
                 dish_name=d["name"],
                 price=int(d["price"]),
-                ingredients=canonical_ingredients(ingredients),
+                ingredients=list(ingredients),
                 place_id=pid,
             )
         )
@@ -137,7 +134,7 @@ def run_search(
         preference=preference,
         user_lat=user_lat,
         user_lng=user_lng,
-        required_dish=required_dish,
+        required_dish=required_dish, 
         max_price=max_price,
         max_radius_m=max_radius_m,
         top_k=top_k,
@@ -145,12 +142,19 @@ def run_search(
 
     relaxation = None
     if not ranked:
-        relaxation = suggest_relaxation(
-            original_count=0,
-            required_dish=required_dish,
-            max_price=max_price,
-            allergies=preference.allergies,
-        )
+        ranked = rank_places( 
+            candidates=candidates,
+                preference=preference,
+                user_lat=user_lat,
+                user_lng=user_lng,
+                required_dish=required_dish,
+                max_price=max_price,
+                max_radius_m=max_radius_m*1.2,
+
+                top_k=top_k
+            )
+        
+        
 
     return ranked, relaxation or {}
 

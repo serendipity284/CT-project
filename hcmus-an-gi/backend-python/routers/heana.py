@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime
 from typing import Any, Optional
-
+from services.alley_routing import build_alley_route
 from fastapi import APIRouter, Depends, HTTPException, Header
 from jose import JWTError, jwt
 
@@ -25,16 +25,14 @@ from models.schemas import (
     SearchRequest,
     SearchResponse,
     ExtractedIntent,
-    SurveyAnswers,
+    SurveyAnswers
 )
-from services.ingredient_names import canonical_ingredients
-from services.ingredient_catalog import resolve_names
 from services.ranking import UserPreference
 from services.search_service import (
     candidate_to_dict,
     preference_from_survey,
-    preference_from_choices,
     run_search,
+    preference_from_choices
 )
 from services.alley_routing import (
     AlleyGraph,
@@ -82,11 +80,7 @@ def fetch_dishes(place_ids: list[int]) -> list[dict]:
     conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
     placeholders = ",".join(["%s"] * len(place_ids))
-    cur.execute(
-        f"SELECT id, place_id, name, price, ingredients FROM dishes "
-        f"WHERE place_id IN ({placeholders}) AND is_available=1 AND price > 0",
-        place_ids,
-    )
+    cur.execute(f"SELECT * FROM dishes WHERE place_id IN ({placeholders}) AND is_available=1", place_ids)
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -99,6 +93,14 @@ def fetch_dishes(place_ids: list[int]) -> list[dict]:
                 r["ingredients"] = []
     return rows
 
+def fetch_survey_done(user_id: str) -> bool:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT survey_done FROM user_preferences WHERE user_id=%s", (user_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return bool(row and row[0])
 
 def fetch_user_preference(user_id: str) -> UserPreference:
     conn = get_db_connection()
@@ -121,12 +123,10 @@ def fetch_user_preference(user_id: str) -> UserPreference:
         w_quality=float(row["w_quality"]),
         w_freshness=float(row["w_freshness"]),
         allergies=list(allergies),
-        survey_done=bool(row.get("survey_done")),
     )
 
 
 def save_user_preference(user_id: str, pref: UserPreference, survey_done: bool = True):
-    pref.allergies = canonical_ingredients(pref.allergies, resolve_names(pref.allergies))
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
@@ -185,18 +185,11 @@ def fetch_alley_graph_for_place(place_id: int) -> AlleyGraph:
 
 
 # Auth helper (giả định dùng JWT giống app.py hiện tại)
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
-
+from auth_deps import decode_token
 
 def get_current_user_id(authorization: Optional[str] = Header(None)) -> Optional[str]:
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization.split(" ", 1)[1]
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("sub")
-    except JWTError:
-        return None
+    user = decode_token(authorization)
+    return user["id"] if user else None
 
 
 # ------------------------------------------------------------
@@ -208,7 +201,6 @@ def submit_onboarding(
     body: SurveyAnswers,
     user_id: Optional[str] = Depends(get_current_user_id),
 ):
-    """Chỉ user đăng nhập mới lưu DB. Khách tính trọng số ở frontend."""
     if not user_id:
         raise HTTPException(401, "Cần đăng nhập để lưu preference.")
     pref = preference_from_choices(body.q1, body.q2, body.allergies_text)
@@ -234,7 +226,7 @@ def get_preferences(user_id: Optional[str] = Depends(get_current_user_id)):
         w_quality=pref.w_quality,
         w_freshness=pref.w_freshness,
         allergies=pref.allergies,
-        survey_done=pref.survey_done,
+        survey_done=fetch_survey_done(user_id),
     )
 
 
@@ -285,13 +277,6 @@ def search_places(
     place_ids = [p["id"] for p in place_rows]
     dish_rows = fetch_dishes(place_ids)
 
-    if pref.allergies:
-        labels = pref.allergies + [name for dish in dish_rows for name in dish["ingredients"] or []]
-        catalog = resolve_names(labels, learn=False)
-        pref.allergies = canonical_ingredients(pref.allergies, catalog)
-        for dish in dish_rows:
-            dish["ingredients"] = canonical_ingredients(dish["ingredients"] or [], catalog)
-
     ranked, relaxation = run_search(
         place_rows=place_rows,
         dish_rows=dish_rows,
@@ -311,26 +296,34 @@ def search_places(
     )
 
 
+def fetch_place_by_id(place_id: int) -> Optional[dict]:
+    conn = get_db_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT * FROM places WHERE id=%s AND is_active=1", (place_id,))
+        return cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+
+
 @router.post("/directions", response_model=DirectionsResponse)
 def get_directions(body: DirectionsRequest):
     """
     Dẫn đường 2 chặng:
-    - Stage 1: GPS → Alley Entrance (OSRM - gọi external)
-    - Stage 2: Landmark steps trong hẻm (Dijkstra trên alley_graph)
+    - Stage 1: GPS → Alley Entrance (OSRM)
+    - Stage 2: Landmark steps trong hẻm (Dijkstra trên alley graph)
     """
-    # Lấy thông tin quán
-    places = fetch_places()
-    place = next((p for p in places if p["id"] == body.place_id), None)
+    place = fetch_place_by_id(body.place_id)
     if not place:
         raise HTTPException(404, "Không tìm thấy quán.")
 
-    # Stage 2: Alley graph
     graph = fetch_alley_graph_for_place(body.place_id)
     alley_result = build_alley_route(graph, body.place_id)
 
-    stage2_steps = []
-    stage2_total = 0.0
     has_alley = alley_result.found
+    stage2_steps: list[RouteStepOut] = []
+    stage2_total = 0.0
     if has_alley:
         stage2_total = alley_result.total_distance_m
         stage2_steps = [
@@ -347,17 +340,17 @@ def get_directions(body: DirectionsRequest):
             for s in alley_result.steps
         ]
 
-    # Stage 1: đến cổng hẻm (hoặc đến quán nếu không có alley data)
-    target_lat = place.get("alley_entrance_lat") or place["lat"]
-    target_lng = place.get("alley_entrance_lng") or place["lng"]
+    # Đích chặng 1: cổng hẻm của tuyến tốt nhất; không có thì cổng lưu trong places; không có nữa thì quán
     if has_alley and alley_result.entrance_node:
         target_lat = alley_result.entrance_node.lat
         target_lng = alley_result.entrance_node.lng
+    else:
+        target_lat = float(place.get("alley_entrance_lat") or place["lat"])
+        target_lng = float(place.get("alley_entrance_lng") or place["lng"])
 
-    # Gọi OSRM (public)
     import urllib.request
-    import urllib.parse
-    stage1_poly = []
+
+    stage1_poly: list = []
     stage1_dist = 0.0
     stage1_dur = 0.0
     try:
@@ -369,17 +362,18 @@ def get_directions(body: DirectionsRequest):
         req = urllib.request.Request(url, headers={"User-Agent": "heana/1.0"})
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode())
-        route = data.get("routes", [None])[0]
+        route = (data.get("routes") or [None])[0]
         if route:
             stage1_poly = route["geometry"]["coordinates"]
             stage1_dist = route["distance"]
-            stage1_dur = route["duration"]
+            stage1_dur = route["distance"] / 1.33
     except Exception:
         pass
 
     msg = ""
     if not has_alley:
-        msg = "Quán chưa có dữ liệu dẫn đường trong hẻm. Chỉ hiển thị đường đến vị trí quán."
+        msg = alley_result.message or "Quán chưa có dữ liệu dẫn đường trong hẻm."
+        msg += " Chỉ hiển thị đường đến vị trí quán."
     elif not stage1_poly:
         msg = "Không lấy được đường GPS. Vẫn có hướng dẫn từng bước trong hẻm."
 

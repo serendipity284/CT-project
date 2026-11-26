@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo,useRef, useState } from "react";
 import { Bookmark, RefreshCw, Send } from "lucide-react";
 import {
   BUDGET_PRESETS,
@@ -13,15 +13,16 @@ import { replyFor, type ChatTurn, type Intent } from "./lib/chat-intent";
 import type { Place } from "./lib/places-data";
 import { generatePlaces, initialPlaces } from "./lib/places-generator";
 import { fetchWalkingRoute } from "./lib/routing";
-import { FACTOR_LABEL, preferenceFromChoices } from "./lib/heana-ranking";
-import { DEFAULT_PREFERENCE, type SurveyAnswers, type SurveyChoice, type SurveyFactor, type UserPreference } from "./lib/heana-types";
+import { useUserLocation } from "./lib/useUserLocation";
+
 import {
-  apiEnabled,
+  apiEnabled, 
   fetchHistory as apiFetchHistory,
   fetchPlaces as apiFetchPlaces,
   fetchReviews as apiFetchReviews,
   fetchSaves as apiFetchSaves,
   getApiUser,
+
   health as apiHealth,
   login as apiLogin,
   logoutApi,
@@ -30,13 +31,14 @@ import {
   signup as apiSignup,
   toggleSaveApi,
   contributePlace,
+
   postChat,
   scanMenuImages,
   contributeWithMenu,
   fetchPlaceInfo,
   fetchSavedPlaces,
-  fetchPreferenceApi,
   saveSurveyApi,
+  fetchPreferenceApi,
   type ApiDish,
   type ApiMenuMeta,
   type ApiPlaceInfo,
@@ -46,6 +48,14 @@ import {
 } from "./lib/api";
 import { mapsPinUrl, mapsSearchUrl, splitAddress } from "./lib/maps";
 import { shrinkImage } from "./lib/image";
+import {
+  DEFAULT_PREFERENCE,
+  type SurveyAnswers,
+  type SurveyChoice,
+  type SurveyFactor,
+  type UserPreference,
+} from "./lib/heana-types";
+import { FACTOR_LABEL, preferenceFromChoices } from "./lib/heana-ranking";
 //random-suggest-test
 import { suggestRandomPlaces } from "./lib/random-suggest";
 
@@ -64,6 +74,8 @@ import {
   getContributions,
   getGuestPref,
   setGuestPref,
+  isSurveySkipped,
+  setSurveySkipped,
   type HistoryItem,
   type Review,
   type User,
@@ -72,9 +84,31 @@ import { CampusMap } from "./components/CampusMap";
 import { ChatHome, type NavTarget } from "./components/ChatHome";
 import { PlacePage, type PlaceMode } from "./components/PlacePage";
 
+// import { PlaceListView } from "./components/PlaceListView";
+
+import { fbAuth } from "./lib/firebase";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendEmailVerification,
+  updateProfile,
+} from "firebase/auth";
+import { loginWithFirebaseToken } from "./lib/api";
+
 type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
 type MenuFile = { file: File; url: string };
 type ScanMeta = { phone: string; hours: string; notes: string };
+type SortKey = "near" | "price_asc" | "price_desc";
+
+/** Bỏ dấu tiếng Việt + chữ thường để so khớp tìm kiếm ("pho" khớp "Phở"). */
+function normalizeText(s: string) {
+  return s
+    .toLowerCase()
+    .replace(/đ/g, "d")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
 
 export default function App() {
     const [suggestedIds, setSuggestedIds] = useState<number[]>([]);
@@ -87,12 +121,19 @@ export default function App() {
   const [saved, setSaved] = useState<number[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [campus, setCampus] = useState<CampusId>("q5");
-  const [budget, setBudget] = useState(50000);
-  const [radius, setRadius] = useState(800);
+  const userLoc = useUserLocation(campus);
+  const [budget, setBudget] = useState<number | null>(null);
+  const [radius, setRadius] = useState<number | null>(null);
   const [onlySaved, setOnlySaved] = useState(false);
+  const [query, setQuery] = useState("");
+  const [directoryQuery, setDirectoryQuery] = useState("");
+  const [directoryHistoryFilter, setDirectoryHistoryFilter] = useState(false);
+  const [namedSearch, setNamedSearch] = useState<{ acrossCampuses: boolean } | null>(null);
+  const [sortBy, setSortBy] = useState<SortKey>("near");
   const [activeId, setActiveId] = useState<number | null>(null);
   const [tab, setTab] = useState<"list" | "chat" | "me" | "contribute">("list");
   const [intent, setIntent] = useState<Intent>({});
+  const [chatFilter, setChatFilter] = useState({ food: "", place: "" });
   const [turns, setTurns] = useState<ChatTurn[]>([
     {
       role: "bot",
@@ -152,7 +193,7 @@ export default function App() {
     try {
       const h = await apiHealth();
       setMysqlOk(h.mysql);
-      const list = await apiFetchPlaces(campus, budget, radius);
+      const list = await apiFetchPlaces(campus);
       setPlaces(
         list.map((p) => ({
           id: p.id,
@@ -166,6 +207,7 @@ export default function App() {
           address: p.address,
           hours: p.hours,
           image_url: (p as { image_url?: string | null }).image_url ?? null,
+          dish_names: p.dish_names ?? [],
         })),
       );
       const revs = await apiFetchReviews();
@@ -183,7 +225,7 @@ export default function App() {
       setMysqlOk(false);
       setApiError(e instanceof Error ? e.message : "Không gọi được API");
     }
-  }, [useApi, campus, budget, radius]);
+  }, [useApi, campus]);
 
   useEffect(() => {
     if (useApi) {
@@ -245,19 +287,58 @@ export default function App() {
     }
   }, [user, useApi]);
 
+  const browsingDirectory = screen === "classic" && tab === "list";
+  const searchText = browsingDirectory ? directoryQuery : query;
   const ranked = useMemo(() => {
-    const origin = CAMPUSES[campus];
-    return places
+    const tokens = normalizeText(searchText).split(/\s+/).filter(Boolean);
+    const allCampuses = browsingDirectory ? !directoryHistoryFilter : Boolean(chatFilter.place) && !intent.campus;
+    const limitResults = browsingDirectory ? directoryHistoryFilter : true;
+
+    const food = browsingDirectory ? "" : normalizeText(chatFilter.food);
+    const placeQ = browsingDirectory ? "" : normalizeText(chatFilter.place);
+
+    // 3 = tên quán chứa món, 2 = có món trong menu, 1 = loại món khớp, 0 = không liên quan
+    const relevance = (p: Place) => {
+      if (!food) return 0;
+      if  (normalizeText(p.name).includes(food)) return 3;
+      if ((p.dish_names ?? []).some((d) => normalizeText(d).includes(food))) return 2;
+      if (normalizeText(p.cuisine).includes(food)) return 1;
+      return 0;
+    };
+
+    const list = places
+      .filter((p) => allCampuses || p.campus === campus)
       .map((p) => ({
         ...p,
-        meters: Math.round(haversine(origin.lat, origin.lng, p.lat, p.lng)),
+        meters: Math.round(haversine(CAMPUSES[p.campus].lat, CAMPUSES[p.campus].lng, p.lat, p.lng)),
       }))
-      .filter((p) => p.campus === campus)
-      .filter((p) => p.price_min <= budget)
-      .filter((p) => p.meters <= radius)
+      .filter((p) => !limitResults || ((budget === null || p.price_min <= budget * 1.1) && (radius === null || p.meters <= radius * 1.2)))
       .filter((p) => !onlySaved || saved.includes(p.id))
-      .sort((a, b) => a.meters - b.meters);
-  }, [places, campus, budget, radius, onlySaved, saved]);
+      .filter((p) => {
+        if (browsingDirectory) {
+          if (!tokens.length) return true;
+          const hay = normalizeText(`${p.name} ${p.cuisine} ${p.address}`);
+          return tokens.every((t) => hay.includes(t));
+        }
+        if (placeQ && !normalizeText(p.name).includes(placeQ)) return false;
+        if (food && relevance(p) === 0) return false; // loại hẳn quán không liên quan
+        return true;
+      });
+
+    const priceKnown = (p: { price_max: number }) => p.price_max > 0;
+    list.sort((a, b) => {
+      if (food) {
+        const d = relevance(b) - relevance(a);
+        if (d) return d;
+      }
+      if (sortBy === "near") return a.meters - b.meters;
+      if (priceKnown(a) !== priceKnown(b)) return priceKnown(a) ? -1 : 1;
+      const diff = sortBy === "price_asc" ? a.price_min - b.price_min : b.price_max - a.price_max;
+      return diff || a.meters - b.meters;
+    });
+    return list;
+  }, [places, campus, budget, radius, onlySaved, saved, searchText, sortBy,
+      browsingDirectory, directoryHistoryFilter, chatFilter, intent.campus]);
 
   const active: (Place & { meters: number }) | null =
     ranked.find((p) => p.id === activeId) ?? ranked[0] ?? null;
@@ -270,7 +351,7 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    const origin = CAMPUSES[campus];
+    const origin = userLoc.origin;
     setRouteLoading(true);
     setRouteError("");
     fetchWalkingRoute(origin.lat, origin.lng, active.lat, active.lng).then((r) => {
@@ -292,7 +373,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [active?.id, campus, active?.lat, active?.lng]);
+  }, [active?.id, campus, active?.lat, active?.lng, userLoc.origin.lat, userLoc.origin.lng]);
 
   useEffect(() => {
     const empty: ApiPlaceInfo = { dishes: [], menu_meta: null };
@@ -319,30 +400,32 @@ export default function App() {
       .catch(() => setSavedApi([]));
   }, [useApi, user, saved]);
 
+ 
   useEffect(() => {
-  let cancelled = false;
-  const key = user?.id ?? "guest";
-  const autoAsk = () => {
-    if (askedFor.current === key) return;   // tránh hỏi 2 lần (StrictMode)
-    askedFor.current = key;
-    startSurvey(true);
-  };
-  (async () => {
-    if (user && useApi) {
-      try {
-        const p = await fetchPreferenceApi();
-        if (cancelled) return;
-        setPref(p);
-        if (!p.survey_done) autoAsk();
-      } catch { /* token hết hạn */ }
-    } else {
-      const g = getGuestPref();
-      setPref(g ?? DEFAULT_PREFERENCE);
-      if (!g) autoAsk();
-    }
-  })();
-  return () => { cancelled = true; };
-}, [user, useApi]);
+    let cancelled = false;
+    const key = user?.id ?? "guest";
+    const autoAsk = () => {
+      if (askedFor.current === key) return;
+      if (isSurveySkipped(key)) return
+      askedFor.current = key;
+      startSurvey(true);
+    };
+    (async () => {
+      if (user && useApi) {
+        try {
+          const p = await fetchPreferenceApi();
+          if (cancelled) return;
+          setPref(p);
+          if (!p.survey_done) autoAsk();
+        } catch { /* token hết hạn */ }
+      } else {
+        const g = getGuestPref();
+        setPref(g ?? DEFAULT_PREFERENCE);
+        if (!g) autoAsk();
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, useApi]);
 
   const savedPlaces: SavedPlace[] = useApi
     ? savedApi.map((p) => ({ ...p, campus: p.campus as CampusId }))
@@ -364,11 +447,11 @@ export default function App() {
     return m;
   }, [reviews]);
 
-  async function remember(query: string) {
+  async function remember(query: string, search = { campus, budget, radiusM: radius }) {
     if (!user) return;
     if (useApi) {
       try {
-        await apiPostHistory(campus, budget, radius, query);
+        await apiPostHistory(search.campus, search.budget, search.radiusM, query);
         const h = await apiFetchHistory();
         setHistory(
           h.map((x) => ({
@@ -384,14 +467,14 @@ export default function App() {
         setApiError(e instanceof Error ? e.message : "Lỗi lịch sử");
       }
     } else {
-      setHistory(addHistory(user.id, { campus, budget, radiusM: radius, query }));
+      setHistory(addHistory(user.id, { ...search, query }));
     }
   }
 
   function applyIntent(next: Intent) {
     if (next.campus) setCampus(next.campus);
-    if (next.budget) setBudget(next.budget);
-    if (next.radiusM) setRadius(next.radiusM);
+    if (next.budget !== undefined) setBudget(next.budget);
+    if (next.radiusM !== undefined) setRadius(next.radiusM);
   }
     //recommend random 
     // opts.pref: dùng khảo sát vừa làm xong (state `pref` chưa kịp cập nhật trong cùng lượt render)
@@ -402,7 +485,7 @@ export default function App() {
             setTurns((t) => [...t, { role: "user", text: "🎲 Gợi ý cho mình 5 quán" }]);
         }
         const picks = suggestRandomPlaces(
-            ranked, ratings, opts?.pref ?? pref, CAMPUSES[campus], radius,
+            ranked, ratings, opts?.pref ?? pref, CAMPUSES[campus], radius ?? ranked.reduce((max, p) => Math.max(max, p.meters), 1),
             opts?.reset ? [] : suggestedIds, 5,
         );
         if (!picks.length) {
@@ -434,13 +517,46 @@ export default function App() {
     );
     pendingRandom.current = true; // đặt SAU startSurvey (startSurvey sẽ reset cờ này)
   }
-
+  function startNewChat() {
+    setTurns((t) => t.slice(0, 1));
+    setDraft("");
+    setIntent({});
+    setEmotionCtx(null);
+    setEmotionTurn(undefined);
+    setTurnCount(0);
+    pendingRandom.current = false;
+    setSurveyStage(null);
+    setSurveyAns({ q1: "any", q2: null });
+    setSuggestedIds([]);
+    setQuery("");
+    setCampus("q5");
+    setBudget(null);
+    setRadius(null);
+    setOnlySaved(false);
+    setSortBy("near");
+    setActiveId(null);
+    setChatFilter({ food: "", place: "" });
+  }
   async function sendChat(text: string) {
   const clean = text.trim();
   if (!clean) return;
 
   if (surveyStage === "q3") {
     void finishSurvey(clean);
+    return;
+  }
+  if (surveyStage === "q1" || surveyStage === "q2") {
+    setDraft("");
+    setTurns((t) => [
+      ...t,
+      { role: "user", text: clean },
+      {
+        role: "bot",
+        text: 'Bạn bấm một lựa chọn bên trên nhé (hoặc "Bỏ qua lúc này").',
+        // gắn lại nút vì ChatHome chỉ hiện nút ở bong bóng cuối cùng
+        choices: surveyStage === "q1" ? q1Choices() : q2Choices(surveyAns.q1),
+      },
+    ]);
     return;
   }
 
@@ -454,6 +570,12 @@ export default function App() {
   try {
     if (useApi) {
       const result = await postChat(clean, {
+        budget_unlimited: intent.budget === null,
+        radius_unlimited: intent.radiusM === null,
+        budget_is_default: intent.budgetIsDefault,
+        radius_is_default: intent.radiusIsDefault,
+        food_name: intent.foodName,
+        place_name: intent.placeName,
         campus: intent.campus,
         budget: intent.budget,
         radius_m: intent.radiusM,
@@ -464,11 +586,14 @@ export default function App() {
 
       const nextIntent: Intent = {
         campus: result.campus as Intent["campus"],
-        budget: result.budget,
-        radiusM: result.radius_m,
+        budget: result.budget_unlimited ? null : result.budget ?? undefined,
+        radiusM: result.radius_unlimited ? null : result.radius_m ?? undefined,
+        foodName: result.food_name,
+        placeName: result.place_name,
       };
 
       setIntent(nextIntent);
+      setChatFilter({food: result.food_name ?? "", place: result.place_name ?? ""});
       // Persist emotion context for next turn
       setEmotionCtx(result.emotion ?? null);
       setEmotionTurn(result.emotion_turn);
@@ -483,7 +608,7 @@ export default function App() {
         applyIntent(nextIntent);
         setTurns(t => [...t, { role: "bot", text: "Danh sách quán", list: true }]);
         setActiveId(null);
-        void remember(clean);
+        void remember(clean, { campus: nextIntent.campus ?? campus, budget: nextIntent.budget ?? null, radiusM: nextIntent.radiusM ?? null });
       }
 
     } else {
@@ -491,6 +616,7 @@ export default function App() {
       const result = replyFor(clean, intent);
 
       setIntent(result.intent);
+      setChatFilter({food: result.intent.foodName ?? "", place: result.intent.placeName ?? ""});
 
       setTurns(t => [
         ...t,
@@ -518,7 +644,7 @@ export default function App() {
     if (useApi) {
       void loadFromApi().then(() => {
         setActiveId(null);
-        setRegenMsg("Đã tải lại danh sách quán từ MySQL.");
+        setRegenMsg("Đã tải lại danh sách quán.");
         setTimeout(() => setRegenMsg(""), 3000);
       });
       return;
@@ -604,7 +730,7 @@ export default function App() {
         notes: (res.notes ?? []).join("\n"),
       });
       setContribMsg(
-        `AI đọc được ${dishes.length} món từ ${res.images} ảnh. Kiểm tra rồi bấm Gửi (khoảng giá sẽ tự tính).`,
+        `Đã đọc được ${dishes.length} món từ ${res.images} ảnh. Kiểm tra rồi bấm Gửi (khoảng giá sẽ tự tính).`,
       );
     } catch (err) {
       setContribMsg(err instanceof Error ? err.message : "Scan menu thất bại");
@@ -625,61 +751,108 @@ export default function App() {
     return p;
   }
 
-  const Q1_CHOICES = [
+  const NAV = {
+    back: { label: "← Đổi câu trước", value: "__back" },
+    skip: { label: "Bỏ qua lúc này", value: "__skip" },
+  };
+
+  const ASK_ALLERGY =
+    'Câu 3: Cảm ơn bạn! Bạn có thành phần nào khiến bạn dị ứng hoặc khó chịu khi ăn không? Gõ vào ô chat bên dưới (cách nhau bằng dấu phẩy), hoặc gõ "không" nếu không có.';
+
+  const q1Choices = () => [
     { label: FACTOR_LABEL.price, value: "price" },
     { label: FACTOR_LABEL.distance, value: "distance" },
     { label: FACTOR_LABEL.quality, value: "quality" },
     { label: "Sao cũng được", value: "any" },
+    NAV.skip,
   ];
 
-  const ASK_ALLERGY =
-    'Câu 3: Cảm ơn bạn! Bạn có thành phần nào khiến bạn dị ứng hoặc khó chịu khi ăn không? Gõ vào ô chat bên dưới (cách nhau bằng dấu phẩy), hoặc gõ "không" nếu không có.';
+  const q2Choices = (q1: SurveyChoice) => [
+    ...(["price", "distance", "quality"] as SurveyFactor[])
+      .filter((f) => f !== q1)
+      .map((f) => ({ label: FACTOR_LABEL[f], value: f })),
+    { label: "Sao cũng được", value: "any" },
+    NAV.back,
+    NAV.skip,
+  ];
+
+  const q1Turn = (intro = ""): ChatTurn => ({
+    role: "bot",
+    text: `${intro}Câu 1: Bạn muốn kết quả tìm kiếm ưu tiên yếu tố nào nhất?`,
+    choices: q1Choices(),
+  });
+  const q2Turn = (q1: SurveyChoice): ChatTurn => ({
+    role: "bot",
+    text: "Câu 2: Hãy chọn yếu tố phụ để mình đưa ra lựa chọn tốt hơn cho bạn",
+    choices: q2Choices(q1),
+  });
+  const q3Turn = (): ChatTurn => ({
+    role: "bot",
+    text: ASK_ALLERGY,
+    choices: [NAV.back, NAV.skip],
+  });
 
   function startSurvey(first: boolean, customIntro?: string) {
     pendingRandom.current = false; // khảo sát mở từ menu / lần đầu thì không tự random
     setSurveyStage("q1");
     setSurveyAns({ q1: "any", q2: null });
     setScreen("chat");
-    const intro = customIntro ?? (first
-      ? "Chào bạn mới! Trước khi chúng ta bắt đầu việc lựa chọn quán, bạn hãy thực hiện bài khảo sát này để giúp mình tìm quán phù hợp với bạn nhất! (Bạn có thể thực hiện lại bất kỳ lúc nào bạn muốn)\n\n"
-      : "");
+    const intro =
+      customIntro ??
+      (first
+        ? "Chào bạn mới! Trước khi chúng ta bắt đầu việc lựa chọn quán, bạn hãy thực hiện bài khảo sát này để giúp mình tìm quán phù hợp với bạn nhất! (Bạn có thể thực hiện lại bất kỳ lúc nào bạn muốn)\n\n"
+        : "");
+    setTurns((t) => [...t, q1Turn(intro)]);
+  }
+
+  function goBack(label: string) {
+    const echo: ChatTurn = { role: "user", text: label };
+    if (surveyStage === "q3" && surveyAns.q1 !== "any") {
+      setSurveyStage("q2");
+      setSurveyAns((a) => ({ ...a, q2: null }));
+      setTurns((t) => [...t, echo, q2Turn(surveyAns.q1)]);
+    } else if (surveyStage === "q3" || surveyStage === "q2") {
+      setSurveyStage("q1");
+      setSurveyAns({ q1: "any", q2: null });
+      setTurns((t) => [...t, echo, q1Turn()]);
+    }
+  }
+
+  function skipSurvey(label: string) {
+    setSurveyStage(null);
+    setSurveyAns({ q1: "any", q2: null });
+    setSurveySkipped(user?.id ?? "guest"); // tải lại trang không hỏi lại
+    setTurns((t) => [...t, { role: "user", text: label }]);
+    if (pendingRandom.current) {
+      pendingRandom.current = false;
+      setTurns((t) => [...t, { role: "bot", text: "Ok, mình bốc quán theo ưu tiên hiện tại nhé." }]);
+      suggestRandom({ pref, reset: true, echo: false });
+      return;
+    }
     setTurns((t) => [
       ...t,
-      {
-        role: "bot",
-        text: `${intro}Câu 1: Bạn muốn kết quả tìm kiếm ưu tiên yếu tố nào nhất?`,
-        choices: Q1_CHOICES,
-      },
+      { role: "bot", text: "Ok, mình bỏ qua khảo sát. Bạn có thể làm lại bất cứ lúc nào (menu ☰ → Khảo sát)." },
     ]);
   }
 
   function pickChoice(value: string, label: string) {
+    if (value === "__skip") return skipSurvey(label);
+    if (value === "__back") return goBack(label);
+
     if (surveyStage === "q1") {
       const q1 = value as SurveyChoice;
       setSurveyAns({ q1, q2: null });
       if (q1 === "any") {
         setSurveyStage("q3");
-        setTurns((t) => [...t, { role: "user", text: label }, { role: "bot", text: ASK_ALLERGY }]);
+        setTurns((t) => [...t, { role: "user", text: label }, q3Turn()]);
       } else {
         setSurveyStage("q2");
-        const others = (["price", "distance", "quality"] as SurveyFactor[]).filter((f) => f !== q1);
-        setTurns((t) => [
-          ...t,
-          { role: "user", text: label },
-          {
-            role: "bot",
-            text: "Câu 2: Hãy chọn yếu tố phụ để mình đưa ra lựa chọn tốt hơn cho bạn",
-            choices: [
-              ...others.map((f) => ({ label: FACTOR_LABEL[f], value: f })),
-              { label: "Sao cũng được", value: "any" },
-            ],
-          },
-        ]);
+        setTurns((t) => [...t, { role: "user", text: label }, q2Turn(q1)]);
       }
     } else if (surveyStage === "q2") {
       setSurveyAns((a) => ({ ...a, q2: value as SurveyChoice }));
       setSurveyStage("q3");
-      setTurns((t) => [...t, { role: "user", text: label }, { role: "bot", text: ASK_ALLERGY }]);
+      setTurns((t) => [...t, { role: "user", text: label }, q3Turn()]);
     }
   }
 
@@ -722,7 +895,7 @@ export default function App() {
     }
   }
 
-  async function submitContribution(e: React.FormEvent) {
+  async function submitContribution(e: React.SubmitEvent) {
     e.preventDefault();
     if (!user) {
       setContribMsg("Cần đăng nhập để đóng góp quán.");
@@ -774,11 +947,11 @@ export default function App() {
               : undefined,
           });
           setContribMsg(
-            `Đã lưu quán #${res.id} + ${res.dishes_saved} món từ menu vào MySQL. ${locMsg(res)}`,
+            `Đã lưu quán #${res.id} + ${res.dishes_saved} món. ${locMsg(res)}`,
           );
         } else {
           const res = await contributePlace(payload);
-          setContribMsg(`Đã lưu MySQL (id=${res.id}). ${locMsg(res)}`);
+          setContribMsg(`Đã lưu quán (id=${res.id}). ${locMsg(res)}`);
         }
         setScannedDishes([]);
         clearMenuFiles();
@@ -814,7 +987,7 @@ export default function App() {
           const ids = new Set(mapped.map((m) => m.id));
           return [...mapped, ...prev.filter((p) => !ids.has(p.id))];
         });
-        setContribMsg("Đã lưu offline (localStorage). Hiện trên list/map.");
+        setContribMsg("Đã lưu quán.");
       }
       setContribName("");
       setContribNote("");
@@ -849,6 +1022,7 @@ export default function App() {
         {/* ẩn (không huỷ) khung chat khi đang ở trang quán → quay lại vẫn còn danh sách */}
         <div style={{ display: screen === "chat" ? "contents" : "none" }}>
           <ChatHome
+            onNewChat={startNewChat}
             userName={user?.name ?? null}
             turns={turns}
             results={ranked}
@@ -860,6 +1034,8 @@ export default function App() {
                     }}
                     onSuggest={startRandomFlow}
                     onReroll={() => suggestRandom()}
+                    onSurvey={() => startSurvey(false)}
+                    onChoice={pickChoice}
             draft={draft}
             onDraft={setDraft}
             onSend={(t) => void sendChat(t)}
@@ -871,11 +1047,10 @@ export default function App() {
             }}
             onNavigate={(to: NavTarget) => {
               if (to === "chat") return;
+              if (to === "list") setDirectoryHistoryFilter(false);
               setTab(to);
               setScreen("classic");
             }}
-            onSurvey={() => startSurvey(false)}
-            onChoice={pickChoice}
           />
         </div>
         {screen === "place" && active && (
@@ -889,6 +1064,7 @@ export default function App() {
             route={{ coords: routeCoords, meta: routeMeta, loading: routeLoading, error: routeError }}
             onBack={() => setScreen("chat")}
             onSwitch={setPlaceMode}
+            loc={userLoc}
             onBigMap={() => {
               setTab("list");
               setScreen("classic");
@@ -936,134 +1112,141 @@ export default function App() {
           )}
         </div>
       </header>
-
-      <p className="muted">
-        Nguồn dữ liệu:{" "}
-        {useApi ? (
-          <>
-            API + MySQL{" "}
-            {mysqlOk === true && <span style={{ color: "#15803d" }}>(DB OK)</span>}
-            {mysqlOk === false && <span className="error">(MySQL lỗi — xem CMD uvicorn)</span>}
-          </>
-        ) : (
-          <>offline (localStorage) — tạo file <code>.env</code> với <code>VITE_API_URL=http://localhost:8000</code></>
-        )}
-      </p>
+      
       {apiError && <p className="error">{apiError}</p>}
       {regenMsg && <p className="muted">{regenMsg}</p>}
 
-      <div className="campus-row">
-        {(Object.keys(CAMPUSES) as CampusId[]).map((id) => (
-          <button
-            key={id}
-            type="button"
-            className={campus === id ? "chip is-on" : "chip"}
-            onClick={() => {
-              setCampus(id);
-              setActiveId(null);
-            }}
-          >
-            {CAMPUSES[id].short}
-          </button>
-        ))}
-        <a className="chip" href="/hcmus-mysql.sql" download>
-          Schema MySQL
-        </a>
-      </div>
-
-      <section className="filters">
-        <label>
-          Ngân sách tối đa
-          <div className="row wrap">
-            {BUDGET_PRESETS.map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={budget === n ? "chip is-on" : "chip"}
-                onClick={() => setBudget(n)}
-              >
-                {vnd(n)}
-              </button>
-            ))}
-            <input
-              className="field tiny"
-              type="number"
-              min={10000}
-              step={5000}
-              value={budget}
-              onChange={(e) => setBudget(Number(e.target.value) || 0)}
-            />
-          </div>
-        </label>
-        <label>
-          Khoảng cách đi bộ
-          <div className="row wrap">
-            {RADIUS_PRESETS.map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={radius === n ? "chip is-on" : "chip"}
-                onClick={() => setRadius(n)}
-              >
-                {n >= 1000 ? `${n / 1000}km` : `${n}m`}
-              </button>
-            ))}
-            <input
-              className="field tiny"
-              type="number"
-              min={100}
-              step={100}
-              value={radius}
-              onChange={(e) => setRadius(Number(e.target.value) || 0)}
-            />
-          </div>
-        </label>
-      </section>
-
-      <div className="stage">
-        <aside className="panel">
-          <div className="tabs">
-            {(["list", "chat", "contribute", "me"] as const).map((id) => (
-              <button
-                key={id}
-                type="button"
-                className={tab === id ? "tab is-on" : "tab"}
-                onClick={() => setTab(id)}
-              >
-                {id === "list"
-                  ? "Quán"
-                  : id === "chat"
-                    ? "Hỏi trợ lý"
-                    : id === "contribute"
-                      ? "Đóng góp"
-                      : "Của tôi"}
-              </button>
-            ))}
-          </div>
-
+      {/* BỐ CỤC MỚI: CỘT TRÁI NỘI DUNG CHÍNH - CỘT PHẢI THANH DANH MỤC (KHÔNG MAP, KHÔNG LỌC KHU VỰC) */}
+      <div className="stage-no-map">
+        {/* CỘT TRÁI: NỘI DUNG CHÍNH */}
+        <main className="main-content-panel">
           {tab === "list" && (
-            <div className="stack">
-              <p className="muted">
-                {ranked.length} quán · ≤ {vnd(budget)} · trong {radius}m
-              </p>
-              {ranked.map((p) => (
+            <div className="ds-quan-container">
+              {/* Hàng trên cùng: Ô Tìm kiếm + Nút Thêm mới quán ăn */}
+              <div className="ds-quan-toolbar">
+                <input
+                  className="field grow"
+                  type="search"
+                  value={directoryQuery}
+                  onChange={(e) => setDirectoryQuery(e.target.value)}
+                  placeholder="Tìm tên quán, món, địa chỉ…"
+                  aria-label="Tìm quán"
+                />
                 <button
-                  key={p.id}
                   type="button"
-                  className={active?.id === p.id ? "card is-on" : "card"}
-                  onClick={() => setActiveId(p.id)}
+                  className="btn-primary"
+                  onClick={() => setTab("contribute")}
                 >
-                  <strong>{p.name}</strong>
-                  <span>
-                    {p.cuisine} · {priceText(p)}
-                  </span>
-                  <span>
-                    {p.meters}m · {walkMinutes(p.meters)} phút · {p.hours}
-                  </span>
+                  + Thêm mới quán ăn
                 </button>
-              ))}
+              </div>
+
+              {/* Thanh thông tin số lượng & Sắp xếp */}
+              <div className="ds-sort-bar">
+                <span className="muted">{ranked.length} quán</span>
+                <select
+                  className="field select"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortKey)}
+                  aria-label="Sắp xếp"
+                >
+                  <option value="near">Gần nhất</option>
+                  <option value="price_asc">Giá thấp → cao</option>
+                  <option value="price_desc">Giá cao → thấp</option>
+                </select>
+              </div>
+
+              {/* Danh sách thẻ quán chia 2 cột */}
+              <div className="ds-card-list">
+                {ranked.map((p) => {
+                  const pReviews = reviews.filter((r) => r.placeId === p.id);
+                  const ratingAvg =
+                    pReviews.length > 0
+                      ? (
+                          pReviews.reduce((sum, r) => sum + r.rating, 0) /
+                          pReviews.length
+                        ).toFixed(1)
+                      : null;
+
+                  const cleanAddress = splitAddress(p.address).address;
+                  const previewDishes = (
+                    p as Place & { dishes?: { name: string; price?: number }[] }
+                  ).dishes?.slice(0, 3);
+
+                  return (
+                    <div
+                      key={p.id}
+                      role="button"
+                      tabIndex={0}
+                      className={
+                        active?.id === p.id
+                          ? "ds-place-card is-on"
+                          : "ds-place-card"
+                      }
+                      onClick={() => setActiveId(p.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") setActiveId(p.id);
+                      }}
+                    >
+                      {/* Cột trái: Hình + Tên quán + Giá + Sao + Địa chỉ */}
+                      <div className="ds-card-left">
+                        <div className="ds-thumb">
+                          {(p as Place & { image_url?: string }).image_url ? (
+                            <img
+                              src={
+                                (p as Place & { image_url?: string }).image_url
+                              }
+                              alt={p.name}
+                            />
+                          ) : (
+                            <span className="ds-thumb-placeholder">🍜</span>
+                          )}
+                        </div>
+
+                        <div className="ds-info">
+                          <strong className="ds-place-name">{p.name}</strong>
+                          <span className="ds-place-price">{priceText(p)}</span>
+                          <span className="ds-place-meta">
+                            <span className="ds-rating">
+                              {ratingAvg ? `${ratingAvg} ★` : "Chưa có ★"}
+                            </span>
+                            {" · "}
+                            <span>Địa chỉ: {cleanAddress || "Đang cập nhật"}</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Cột phải: Món tiêu biểu + Giá */}
+                      <div className="ds-card-right">
+                        {previewDishes && previewDishes.length > 0 ? (
+                          <ul className="ds-dish-list">
+                            {previewDishes.map((d, idx) => (
+                              <li key={idx} className="ds-dish-item">
+                                <span className="ds-dish-name">{d.name}</span>
+                                <span className="ds-dish-price">
+                                  {d.price != null ? vnd(d.price) : "—"}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="ds-no-dishes">
+                            <div>Loại: {p.cuisine}</div>
+                            <div className="muted">Đang cập nhật menu...</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
               {ranked.length === 0 && (
-                <p className="muted">Không có quán khớp. Nới lọc hoặc tải lại từ MySQL.</p>
+                <p className="muted">
+                  {directoryQuery.trim()
+                    ? `Không tìm thấy quán khớp "${directoryQuery.trim()}".`
+                    : "Chưa có quán nào trong danh sách."}
+                </p>
               )}
             </div>
           )}
@@ -1097,13 +1280,11 @@ export default function App() {
             </div>
           )}
 
-          
           {tab === "contribute" && (
-            <div className="stack">
+            <div className="stack hx-contrib">
               <h2 className="section">Đóng góp quán mới</h2>
               <p className="muted">
-                Thêm quán quanh <strong>{CAMPUSES[campus].short}</strong>. Offline lưu máy bạn;
-                online (API) lưu MySQL, có chống spam.
+                Thêm quán quanh <strong>{CAMPUSES[campus].short}</strong>.
               </p>
               {!user && (
                 <button className="btn-primary" type="button" onClick={() => setPage("login")}>
@@ -1113,66 +1294,111 @@ export default function App() {
               <form className="stack" onSubmit={(e) => void submitContribution(e)}>
                 <label>
                   Tên quán
-                  <input className="field" required minLength={2} value={contribName}
-                    onChange={(e) => setContribName(e.target.value)} placeholder="Cơm tấm cô Năm" />
+                  <input
+                    className="field"
+                    required
+                    minLength={2}
+                    value={contribName}
+                    onChange={(e) => setContribName(e.target.value)}
+                    placeholder="Cơm tấm cô Năm"
+                  />
                 </label>
                 <label>
                   Loại món
-                  <input className="field" required value={contribCuisine}
-                    onChange={(e) => setContribCuisine(e.target.value)} />
+                  <input
+                    className="field"
+                    required
+                    value={contribCuisine}
+                    onChange={(e) => setContribCuisine(e.target.value)}
+                  />
                 </label>
                 <label>
                   Địa chỉ đầy đủ (dùng để định vị trên Google Maps)
-                  <textarea className="field" required minLength={4} rows={2} value={contribAddress}
+                  <textarea
+                    className="field"
+                    required
+                    minLength={4}
+                    rows={2}
+                    value={contribAddress}
                     onChange={(e) => setContribAddress(e.target.value)}
-                    placeholder="VD: 227 Nguyễn Văn Cừ, Phường 4, Quận 5" />
+                    placeholder="VD: 227 Nguyễn Văn Cừ, Phường 4, Quận 5"
+                  />
                 </label>
                 {useApi && (
                   <label>
                     Link Google Maps (tùy chọn, để vị trí chính xác hơn)
-                    <input className="field" type="url" value={contribMapsUrl}
+                    <input
+                      className="field"
+                      type="url"
+                      value={contribMapsUrl}
                       onChange={(e) => setContribMapsUrl(e.target.value)}
-                      placeholder="Mở quán trên Google Maps → Chia sẻ → Sao chép liên kết" />
+                      placeholder="Mở quán trên Google Maps → Chia sẻ → Sao chép liên kết"
+                    />
                   </label>
                 )}
                 <label>
                   Giờ mở
-                  <input className="field" value={contribHours}
-                    onChange={(e) => setContribHours(e.target.value)} />
+                  <input
+                    className="field"
+                    value={contribHours}
+                    onChange={(e) => setContribHours(e.target.value)}
+                  />
                 </label>
                 <div className="row wrap">
                   <label>
-                    Giá từ (đ) <span className="muted">tùy chọn</span>
-                    <input className="field tiny" type="number" min={0} step={1}
-                      placeholder="AI tự tính"
-                      value={contribMin} onChange={(e) => setContribMin(e.target.value)} />
+                    Giá từ (đ)
+                    <input
+                      className="field tiny"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder="Bỏ trống nếu chưa rõ"
+                      value={contribMin}
+                      onChange={(e) => setContribMin(e.target.value)}
+                    />
                   </label>
                   <label>
-                    Giá đến (đ) <span className="muted">tùy chọn</span>
-                    <input className="field tiny" type="number" min={0} step={1}
-                      placeholder="AI tự tính"
-                      value={contribMax} onChange={(e) => setContribMax(e.target.value)} />
+                    Giá đến (đ)
+                    <input
+                      className="field tiny"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder="Bỏ trống nếu chưa rõ"
+                      value={contribMax}
+                      onChange={(e) => setContribMax(e.target.value)}
+                    />
                   </label>
                 </div>
                 {!useApi && (
                   <label>
                     Cách cổng ~ (m)
-                    <input className="field" type="number" min={50} max={1500} step={50}
+                    <input
+                      className="field"
+                      type="number"
+                      min={50}
+                      max={1500}
+                      step={50}
                       value={contribOffsetM}
-                      onChange={(e) => setContribOffsetM(Number(e.target.value) || 200)} />
+                      onChange={(e) => setContribOffsetM(Number(e.target.value) || 200)}
+                    />
                   </label>
                 )}
                 <label>
                   Ghi chú
-                  <input className="field" value={contribNote}
-                    onChange={(e) => setContribNote(e.target.value)} placeholder="Món đáng thử…" />
+                  <input
+                    className="field"
+                    value={contribNote}
+                    onChange={(e) => setContribNote(e.target.value)}
+                    placeholder="Món đáng thử…"
+                  />
                 </label>
 
                 <div className="menu-scan-box">
-                  <strong>Ảnh menu (AI đọc món, giá, thông tin quán)</strong>
+                  <strong>Ảnh menu</strong>
                   <p className="muted">
                     Menu nhiều trang? Chọn nhiều ảnh một lúc hoặc bấm chọn thêm nhiều lần (tối đa
-                    10 ảnh). Cần đăng nhập + API + <code>GEMINI_API_KEY</code>.
+                    10 ảnh).
                   </p>
                   <input
                     type="file"
@@ -1210,83 +1436,129 @@ export default function App() {
                       disabled={scanBusy || !user || !useApi}
                       onClick={() => void runScan()}
                     >
-                      {scanBusy ? "AI đang đọc menu…" : `AI đọc menu (${menuFiles.length} ảnh)`}
+                      {scanBusy ? "Đang đọc menu…" : `Đọc menu (${menuFiles.length} ảnh)`}
                     </button>
                   )}
                   {scanBusy && (
-                    <p className="muted">Đang gửi ảnh cho AI, có thể mất vài chục giây…</p>
+                    <p className="muted">Đang đọc ảnh, có thể mất vài chục giây…</p>
                   )}
                   {scanMeta && (
                     <div className="stack">
-                      <p className="muted">Thông tin AI đọc được (có thể sửa):</p>
-                      <input className="field" placeholder="Số điện thoại" value={scanMeta.phone}
-                        onChange={(e) => setScanMeta({ ...scanMeta, phone: e.target.value })} />
-                      <input className="field" placeholder="Giờ mở ghi trên menu" value={scanMeta.hours}
-                        onChange={(e) => setScanMeta({ ...scanMeta, hours: e.target.value })} />
-                      <textarea className="field" rows={2} placeholder="Ghi chú của quán (freeship, phụ thu…)"
+                      <p className="muted">Thông tin đọc được (có thể sửa):</p>
+                      <input
+                        className="field"
+                        placeholder="Số điện thoại"
+                        value={scanMeta.phone}
+                        onChange={(e) => setScanMeta({ ...scanMeta, phone: e.target.value })}
+                      />
+                      <input
+                        className="field"
+                        placeholder="Giờ mở ghi trên menu"
+                        value={scanMeta.hours}
+                        onChange={(e) => setScanMeta({ ...scanMeta, hours: e.target.value })}
+                      />
+                      <textarea
+                        className="field"
+                        rows={2}
+                        placeholder="Ghi chú của quán (freeship, phụ thu…)"
                         value={scanMeta.notes}
-                        onChange={(e) => setScanMeta({ ...scanMeta, notes: e.target.value })} />
+                        onChange={(e) => setScanMeta({ ...scanMeta, notes: e.target.value })}
+                      />
                     </div>
                   )}
+
                   {scannedDishes.length > 0 && (
                     <div className="dish-list">
-                      <p className="muted">
-                        Món đã nhận (có thể sửa tên, nhóm, giá). Khoảng giá của quán sẽ tự tính từ
+                      <p className="hx-legend">
+                        <b>Đã đọc {scannedDishes.length} món.</b> Mỗi món gồm{" "}
+                        <b>Tên món</b>, <b>Loại</b> (nhóm trên menu, ví dụ Cơm, Nước uống,
+                        Topping) và <b>Giá (đ)</b>. Giá ghi theo nghìn đồng trên menu (ví dụ
+                        "35") được hiểu là 35.000đ. Ô viền cam là món AI chưa đọc được giá, bạn
+                        hãy nhập lại. <b>Thành phần</b> là tùy chọn, chỉ nhập nếu bạn biết; dùng
+                        để lọc dị ứng, nên hãy nhập thật chính xác. Khoảng giá của quán tự tính từ
                         các món này.
                       </p>
-                      {scannedDishes.map((d, i) => (
-                        <div key={i} className="dish-row">
-                          <input
-                            className="field grow"
-                            placeholder="Thành phần (cách nhau bằng dấu phẩy)"
-                            value={d.ingredients_text ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setScannedDishes((prev) =>
-                                prev.map((x, j) => (j === i ? { ...x, ingredients_text: v } : x)),
-                              );
-                            }}
-                          />
-                          <input
-                            className="field tiny"
-                            placeholder="Nhóm"
-                            value={d.category ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setScannedDishes((prev) =>
-                                prev.map((x, j) => (j === i ? { ...x, category: v || null } : x)),
-                              );
-                            }}
-                          />
-                          <input
-                            className="field tiny"
-                            type="number"
-                            min={0}
-                            placeholder="Giá"
-                            value={d.price ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value === "" ? null : Number(e.target.value);
-                              setScannedDishes((prev) =>
-                                prev.map((x, j) => (j === i ? { ...x, price: v } : x)),
-                              );
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="chip"
-                            onClick={() =>
-                              setScannedDishes((prev) => prev.filter((_, j) => j !== i))
-                            }
-                          >
-                            Xóa
-                          </button>
-                        </div>
-                      ))}
+
+                      {scannedDishes.map((d, i) => {
+                        const patch = (p: Partial<ScannedDish>) =>
+                          setScannedDishes((prev) =>
+                            prev.map((x, j) => (j === i ? { ...x, ...p } : x)),
+                          );
+                        return (
+                          <div key={i} className="hx-dish-card">
+                            <div className="hx-dish-grid">
+                              <label>
+                                <span>Tên món</span>
+                                <input
+                                  className="field"
+                                  placeholder="Tên món"
+                                  value={d.name}
+                                  onChange={(e) => patch({ name: e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>Loại</span>
+                                <input
+                                  className="field tiny"
+                                  placeholder="VD: Cơm"
+                                  value={d.category ?? ""}
+                                  onChange={(e) => patch({ category: e.target.value || null })}
+                                />
+                              </label>
+                              <label className={d.price == null ? "is-warn" : ""}>
+                                <span>Giá (đ){d.price == null ? " · chưa rõ" : ""}</span>
+                                <input
+                                  className="field tiny"
+                                  type="number"
+                                  min={0}
+                                  placeholder="35000"
+                                  value={d.price ?? ""}
+                                  onChange={(e) =>
+                                    patch({
+                                      price: e.target.value === "" ? null : Number(e.target.value),
+                                    })
+                                  }
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setScannedDishes((prev) => prev.filter((_, j) => j !== i))
+                                }
+                              >
+                                Xóa
+                              </button>
+                            </div>
+
+                            {d.ingredients_text === undefined ? (
+                              <button
+                                type="button"
+                                className="hx-ing-add"
+                                onClick={() => patch({ ingredients_text: "" })}
+                              >
+                                + Nhập thành phần
+                              </button>
+                            ) : (
+                              <label>
+                                <span>Thành phần (tùy chọn, cách nhau bằng dấu phẩy)</span>
+                                <input
+                                  className="field"
+                                  placeholder="VD: sườn, bì, trứng, đồ chua"
+                                  value={d.ingredients_text}
+                                  onChange={(e) => patch({ ingredients_text: e.target.value })}
+                                />
+                              </label>
+                            )}
+                          </div>
+                        );
+                      })}
+
                       <button
                         type="button"
                         className="chip"
                         onClick={() =>
-                          setScannedDishes((prev) => [...prev, { name: "Món mới", price: null }])
+                          setScannedDishes((prev) => [...prev, { name: "", price: null }])
                         }
                       >
                         + Thêm món
@@ -1296,9 +1568,17 @@ export default function App() {
                 </div>
 
                 {contribMsg && (
-                  <p className={
-                    /lỗi|loi|cần|nhanh|vượt|trùng|tải cao|phải|không|khong|thất bại/i.test(contribMsg) ? "error" : "muted"
-                  }>{contribMsg}</p>
+                  <p
+                    className={
+                      /lỗi|loi|cần|nhanh|vượt|trùng|tải cao|phải|không|khong|thất bại/i.test(
+                        contribMsg,
+                      )
+                        ? "error"
+                        : "muted"
+                    }
+                  >
+                    {contribMsg}
+                  </p>
                 )}
                 <button className="btn-primary" type="submit" disabled={contribBusy || !user}>
                   {contribBusy ? "Đang gửi…" : "Gửi đóng góp"}
@@ -1307,7 +1587,7 @@ export default function App() {
             </div>
           )}
 
-{tab === "me" && (
+          {tab === "me" && (
             <div className="stack">
               {!user && (
                 <>
@@ -1368,6 +1648,8 @@ export default function App() {
                       className="card"
                       onClick={() => {
                         setCampus(h.campus as CampusId);
+                        setDirectoryHistoryFilter(true);
+                        setDirectoryQuery("");
                         setBudget(h.budget);
                         setRadius(h.radiusM);
                         setTab("list");
@@ -1375,7 +1657,7 @@ export default function App() {
                     >
                       <strong>{h.query}</strong>
                       <span>
-                        {h.campus === "q5" ? "Quận 5" : "Làng ĐH"} · {vnd(h.budget)} · {h.radiusM}m
+                        {h.campus === "q5" ? "Quận 5" : "Làng ĐH"} · {h.budget == null ? "Không giới hạn giá" : vnd(h.budget)} · {h.radiusM == null ? "Không giới hạn bán kính" : `${h.radiusM}m`}
                       </span>
                     </button>
                   ))}
@@ -1383,7 +1665,7 @@ export default function App() {
                     type="button"
                     className="chip"
                     onClick={() =>
-                      void remember(`Thủ công ${CAMPUSES[campus].short} ${budget} ${radius}m`)
+                      void remember(`Thủ công ${CAMPUSES[campus].short} ${budget == null ? "không giới hạn giá" : vnd(budget)} · ${radius == null ? "không giới hạn bán kính" : `${radius}m`}`)
                     }
                   >
                     Lưu lần tìm hiện tại
@@ -1408,22 +1690,11 @@ export default function App() {
                   </button>
                 )}
               </div>
-              <div className="route-box">
-                <strong>Chỉ đường trên bản đồ</strong>
-                {routeLoading && <p className="muted">Đang tính đường đi bộ…</p>}
-                {!routeLoading && routeMeta && (
-                  <p className="muted">
-                    Đi bộ khoảng <strong>{routeMeta.distanceM} m</strong> ·{" "}
-                    <strong>{Math.max(1, Math.round(routeMeta.durationSec / 60))} phút</strong>
-                  </p>
-                )}
-                {routeError && <p className="error">{routeError}</p>}
-              </div>
               <a
                 className="chip"
                 target="_blank"
                 rel="noreferrer"
-                href={`https://www.google.com/maps/dir/?api=1&origin=${CAMPUSES[campus].lat},${CAMPUSES[campus].lng}&destination=${active.lat},${active.lng}&travelmode=walking`}
+                href={`https://www.google.com/maps/dir/?api=1&origin=${userLoc.origin.lat},${userLoc.origin.lng}&destination=${active.lat},${active.lng}&travelmode=walking`}
               >
                 Chỉ đường Google Maps (tab mới)
               </a>{" "}
@@ -1506,24 +1777,39 @@ export default function App() {
               )}
             </div>
           )}
-        </aside>
+        </main>
 
-        <div className="map-wrap">
-          <CampusMap
-            campus={campus}
-            places={ranked}
-            activeId={active?.id ?? null}
-            routeCoords={routeCoords}
-            onPick={setActiveId}
-          />
-          <p className="map-note">
-            {useApi
-              ? "Quán lấy từ MySQL qua API Python. Chỉ đường OSRM trên map."
-              : "Offline: quán mẫu trong JS. Bật MySQL + VITE_API_URL để dùng database."}
-          </p>
-        </div>
+        {/* CỘT PHẢI: THANH DANH MỤC CHUYỂN MỤC */}
+        <aside className="right-nav-sidebar">
+          <p className="nav-sidebar-title">Danh mục</p>
+          <div className="right-tabs">
+            {(["list", "chat", "contribute", "me"] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={tab === id ? "right-tab-btn is-on" : "right-tab-btn"}
+                onClick={() => {
+                  if (id === "chat") {
+                    setScreen("chat");
+                  } else {
+                    if (id === "list") setDirectoryHistoryFilter(false);
+                    setTab(id);
+                  }
+                }}
+              >
+                {id === "list"
+                  ? "Danh sách quán"
+                  : id === "chat"
+                    ? "Khung chat trợ lý"
+                    : id === "contribute"
+                      ? "Thêm mới quán"
+                      : "Của tôi"}
+              </button>
+            ))}
+          </div>
+        </aside>
       </div>
-    </div>
+      </div>
   );
 }
 
@@ -1543,17 +1829,44 @@ function LoginPage({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function submit(e: React.FormEvent) {
+  async function submit(e: React.SubmitEvent) {
     e.preventDefault();
     setError("");
     setBusy(true);
     try {
       if (useApi) {
-        const data =
-          mode === "up"
-            ? await apiSignup(email, password, name)
-            : await apiLogin(email, password);
-        onDone(data.user);
+        try {
+          const cred =
+            mode === "up"
+              ? await createUserWithEmailAndPassword(fbAuth, email, password)
+              : await signInWithEmailAndPassword(fbAuth, email, password);
+          if (mode === "up") {
+            await updateProfile(cred.user, { displayName: name });
+            await sendEmailVerification(cred.user);
+          }
+          const data = await loginWithFirebaseToken(await cred.user.getIdToken(true));
+          onDone(data.user);
+        } catch (err) {
+          const code = (err as { code?: string }).code;
+          const notInFirebase =
+            code === "auth/invalid-credential" || code === "auth/user-not-found";
+          if (mode === "in" && notInFirebase) {
+            // Có thể là tài khoản cũ (trước khi có Firebase): thử mật khẩu cũ trên MySQL
+            const legacy = await apiLogin(email, password);
+            try {
+              const cred = await createUserWithEmailAndPassword(fbAuth, email, password);
+              await sendEmailVerification(cred.user);
+            } catch {
+              /* đã có trên Firebase thì bỏ qua */
+            }
+            onDone(legacy.user);
+            return;
+          }
+          if (code === "auth/email-already-in-use") {
+            throw new Error('Email này đã có tài khoản. Hãy bấm "Đã có tài khoản? Đăng nhập".');
+          }
+          throw err;
+        }
       } else {
         const res = mode === "up" ? signUp(email, password, name) : signIn(email, password);
         if (!res.ok) setError(res.error);
@@ -1565,7 +1878,6 @@ function LoginPage({
       setBusy(false);
     }
   }
-
   return (
     <main className="login-page">
       <div className="login-card">
@@ -1574,9 +1886,9 @@ function LoginPage({
         </button>
         <h1 className="title">HCMUS Ăn Gì</h1>
         <p className="muted">
-          {useApi
+          {/* {useApi
             ? "Tài khoản lưu trên MySQL qua API Python."
-            : "Chế độ offline — tài khoản chỉ trên trình duyệt này."}
+            : "Chế độ offline — tài khoản chỉ trên trình duyệt này."} */}
         </p>
         <form className="stack" onSubmit={submit}>
           {mode === "up" && (

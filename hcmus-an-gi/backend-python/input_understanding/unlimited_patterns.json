@@ -1,0 +1,4 @@
+{
+  "budget": "\\b(?:(?:khong (?:quan tam|gioi han|han che|can gioi han)|bo (?:gioi han|loc|bo loc)|khong xet)(?: (?:ve|den|ca))? (?:(?:(?:gia(?: ca)?|ngan sach|chi phi)|(?:khoang cach|ban kinh)) (?:va|hay|hoac|lan|voi) (?:ca )?)?(?:gia(?: ca)?|ngan sach|chi phi)|(?:gia(?: ca)?|ngan sach|chi phi) (?:(?:nao|bao nhieu|the nao) (?:cung duoc|cung ok)|khong (?:quan trong|gioi han)))\\b",
+  "radius": "\\b(?:(?:khong (?:quan tam|gioi han|han che|can gioi han)|bo (?:gioi han|loc|bo loc)|khong xet)(?: (?:ve|den|ca))? (?:(?:(?:gia(?: ca)?|ngan sach|chi phi)|(?:khoang cach|ban kinh)) (?:va|hay|hoac|lan|voi) (?:ca )?)?(?:khoang cach|ban kinh)|(?:khoang cach|ban kinh) (?:(?:nao|bao nhieu|the nao) (?:cung duoc|cung ok)|khong (?:quan trong|gioi han))|(?:xa gan|gan xa|xa) (?:deu |cung )duoc)\\b"
+}

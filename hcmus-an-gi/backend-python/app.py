@@ -5,6 +5,7 @@ Chay: uvicorn app:app --reload --port 8000
 
 from __future__ import annotations
 
+import httpx
 import unicodedata
 import math
 import os
@@ -22,13 +23,17 @@ from pathlib import Path
 import mysql.connector
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 import bcrypt
 from pydantic import BaseModel, EmailStr, Field
 
+import io
+from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageOps
+
 from menu_scan import scan_menu_images
+from services.ingredient_analyzer import analyze_dishes_background
 from starlette.concurrency import run_in_threadpool
 from rate_limit import (
     check_contribute_allowed,
@@ -40,15 +45,28 @@ from rate_limit import (
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(ENV_PATH, override=True)
+
+from auth_deps import current_user, verified_user
 from input_understanding.extractor import extract_intent
 from input_understanding.validator import validate_intent
-from input_understanding.context import merge_context
+from input_understanding.context import UNLIMITED_PATTERNS, merge_context, merge_limits
 from input_understanding.normalizer import normalize_budget, normalize_budget_text
-from input_understanding.config import DEFAULT_BUDGET, DEFAULT_RADIUS_M
 from input_understanding.food import slugify_food, extract_search_keywords, fallback_extract_food
-from services.ingredient_catalog import resolve_names
-from services.ingredient_names import canonical_ingredients
-from services.ingredient_analyzer import analyze_dishes_background, analyze_missing_batch
+
+import firebase_admin
+from firebase_admin import credentials, auth as fb_auth
+
+_sa = (os.getenv("FIREBASE_SERVICE_ACCOUNT") or "").strip().strip('"').strip("'")
+if not firebase_admin._apps:
+    if not _sa:
+        raise RuntimeError("Khong doc duoc FIREBASE_SERVICE_ACCOUNT tu .env (kiem tra ten bien, file .env co luu chua)")
+    _sa_path = Path(_sa)
+    if not _sa_path.is_absolute():
+        _sa_path = Path(__file__).resolve().parent / _sa_path   # tinh theo thu muc cua app.py
+    if not _sa_path.exists():
+        raise RuntimeError(f"Khong thay file Firebase JSON tai: {_sa_path}")
+    firebase_admin.initialize_app(credentials.Certificate(str(_sa_path)))
+
 
 load_dotenv()
 
@@ -83,6 +101,137 @@ app.add_middleware(
 )
 from routers.heana import router as heana_router
 app.include_router(heana_router, prefix="/api/heana")
+from routers.alley import router as alley_router
+app.include_router(alley_router, prefix="/api/heana")
+
+# ---------------------------------------------------------------- avatar
+UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
+AVATAR_DIR = UPLOAD_DIR / "avatars"
+AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
+
+@app.on_event("startup")
+def ensure_avatar_column():
+    """Tự thêm cột users.avatar_url nếu DB cũ chưa có."""
+    try:
+        conn = mysql.connector.connect(**MYSQL)
+    except mysql.connector.Error:
+        return
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='users' AND COLUMN_NAME='avatar_url'",
+            (MYSQL["database"],),
+        )
+        if cur.fetchone()[0] == 0:
+            cur.execute("ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500) NULL AFTER name")
+            conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _public_user(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["name"],
+        "avatar_url": row.get("avatar_url"),
+    }
+
+
+def _save_avatar_file(raw: bytes, user_id: str) -> str:
+    """Mở lại bằng Pillow (chặn file giả ảnh), cắt vuông 256x256, lưu JPEG."""
+    img = Image.open(io.BytesIO(raw))
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    img = ImageOps.fit(img, (256, 256), Image.LANCZOS)
+    name = f"{user_id}_{int(time.time())}.jpg"
+    img.save(AVATAR_DIR / name, "JPEG", quality=88)
+    return f"/uploads/avatars/{name}"
+
+
+def _delete_avatar_file(url: Optional[str]):
+    if url and url.startswith("/uploads/avatars/"):
+        try:
+            (AVATAR_DIR / Path(url).name).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def current_user(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Can dang nhap")
+    token = authorization[7:].strip()
+    try:
+        data = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return {"id": data["sub"], "email": data.get("email", "")}
+    except JWTError:
+        raise HTTPException(401, "Token khong hop le")
+
+@app.get("/users/me")
+def get_me(user: dict = Depends(current_user)):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id, email, name, avatar_url FROM users WHERE id=%s", (user["id"],))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Khong tim thay tai khoan")
+        return _public_user(row)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/users/me/avatar")
+async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(current_user)):
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(400, "Chi nhan file anh")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "File anh rong")
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Anh toi da 5MB")
+    try:
+        new_url = await run_in_threadpool(_save_avatar_file, raw, user["id"])
+    except Exception:
+        raise HTTPException(400, "Khong doc duoc file anh (jpeg/png/webp)")
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT avatar_url FROM users WHERE id=%s", (user["id"],))
+        old = (cur.fetchone() or {}).get("avatar_url")
+        cur.execute("UPDATE users SET avatar_url=%s WHERE id=%s", (new_url, user["id"]))
+        conn.commit()
+        cur.execute("SELECT id, email, name, avatar_url FROM users WHERE id=%s", (user["id"],))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+    _delete_avatar_file(old)
+    return {"ok": True, "user": _public_user(row)}
+
+
+@app.delete("/users/me/avatar")
+def reset_avatar(user: dict = Depends(current_user)):
+    """Về avatar mặc định."""
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT avatar_url FROM users WHERE id=%s", (user["id"],))
+        old = (cur.fetchone() or {}).get("avatar_url")
+        cur.execute("UPDATE users SET avatar_url=NULL WHERE id=%s", (user["id"],))
+        conn.commit()
+        cur.execute("SELECT id, email, name, avatar_url FROM users WHERE id=%s", (user["id"],))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+    _delete_avatar_file(old)
+    return {"ok": True, "user": _public_user(row)}
 
 # ---------------------------------------------------------------- dinh vi dia chi
 GEO_UA = "hcmus-an-gi/1.0 (student project)"
@@ -233,12 +382,17 @@ def _parse_ings(v) -> list[str]:
             v = json.loads(v)
         except ValueError:
             return []
-    return canonical_ingredients([str(x) for x in v]) if isinstance(v, list) else []
+    return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
 
 
 def _clean_ings(items) -> list[str]:
-    return canonical_ingredients([str(x).strip()[:60] for x in items or []])[:20]
-
+    seen, out = set(), []
+    for x in items or []:
+        s = str(x).strip().lower()[:60]
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:20]
 
 def fetch_menu(cur, place_ids):
     """Load menu rows from the canonical dishes table."""
@@ -297,24 +451,15 @@ def haversine(a_lat, a_lng, b_lat, b_lng):
     return 2 * r * math.asin(min(1.0, math.sqrt(s)))
 
 
-def make_token(user_id: str, email: str) -> str:
+def make_token(user_id: str, email: str, ev: bool = False) -> str:
     payload = {
         "sub": user_id,
         "email": email,
+        "ev": ev,
         "exp": datetime.utcnow() + timedelta(days=7),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-
-def current_user(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Can dang nhap")
-    token = authorization[7:].strip()
-    try:
-        data = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return {"id": data["sub"], "email": data.get("email", "")}
-    except JWTError:
-        raise HTTPException(401, "Token khong hop le")
 
 
 class SignUpIn(BaseModel):
@@ -345,7 +490,7 @@ def signup(body: SignUpIn):
         token = make_token(uid, body.email.lower())
         return {
             "token": token,
-            "user": {"id": uid, "email": body.email.lower(), "name": body.name.strip()},
+            "user": {"id": uid, "email": body.email.lower(), "name": body.name.strip(), "avatar_url": None},
         }
     finally:
         cur.close()
@@ -361,23 +506,128 @@ def login(body: LoginIn):
         row = cur.fetchone()
         if not row or not verify_password(body.password, row["password_hash"]):
             raise HTTPException(401, "Email hoac mat khau sai")
-        token = make_token(row["id"], row["email"])
+        token = make_token(row["id"], row["email"], bool(row.get("email_verified")))
         return {
             "token": token,
-            "user": {"id": row["id"], "email": row["email"], "name": row["name"]},
+            "user": {
+                **_public_user(row),
+                "email_verified": bool(row.get("email_verified")),
+            },
         }
     finally:
         cur.close()
         conn.close()
 
+class FirebaseIn(BaseModel):
+    id_token: str
+GOOGLE_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
 
+
+def _find_google_place_id(name: str, address: str, lat: float, lng: float) -> Optional[str]:
+    r = httpx.post(
+        "https://places.googleapis.com/v1/places:searchText",
+        headers={"X-Goog-Api-Key": GOOGLE_KEY, "X-Goog-FieldMask": "places.id"},
+        json={
+            "textQuery": f"{name} {address}",
+            "languageCode": "vi",
+            "locationBias": {"circle": {"center": {"latitude": lat, "longitude": lng}, "radius": 200.0}},
+        },
+        timeout=8,
+    )
+    r.raise_for_status()
+    places = r.json().get("places") or []
+    return places[0]["id"] if places else None
+
+
+@app.get("/places/{place_id}/google-reviews")
+def google_reviews(place_id: int):
+    if not GOOGLE_KEY:
+        raise HTTPException(503, "Chua cau hinh GOOGLE_MAPS_API_KEY")
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT name, address, lat, lng, google_place_id FROM places WHERE id=%s", (place_id,))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(404, "Khong tim thay quan")
+        gid = p["google_place_id"]
+        if not gid:
+            gid = _find_google_place_id(p["name"], p["address"].split(" | ")[0], float(p["lat"]), float(p["lng"]))
+            if not gid:
+                return {"found": False, "reviews": []}
+            cur.execute("UPDATE places SET google_place_id=%s WHERE id=%s", (gid, place_id))
+            conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    r = httpx.get(
+        f"https://places.googleapis.com/v1/places/{gid}",
+        headers={
+            "X-Goog-Api-Key": GOOGLE_KEY,
+            "X-Goog-FieldMask": "rating,userRatingCount,googleMapsUri,reviews",
+        },
+        params={"languageCode": "vi"},
+        timeout=8,
+    )
+    r.raise_for_status()
+    d = r.json()
+    return {
+        "found": True,
+        "rating": d.get("rating"),
+        "count": d.get("userRatingCount"),
+        "url": d.get("googleMapsUri"),
+        "reviews": [
+            {
+                "author": (x.get("authorAttribution") or {}).get("displayName"),
+                "rating": x.get("rating"),
+                "when": x.get("relativePublishTimeDescription"),
+                "text": ((x.get("text") or {}).get("text")),
+            }
+            for x in d.get("reviews", [])
+        ],
+    }
+
+@app.post("/auth/firebase")
+def firebase_login(body: FirebaseIn):
+    try:
+        d = fb_auth.verify_id_token(body.id_token)
+    except Exception:
+        raise HTTPException(401, "Token Firebase không hợp lệ")
+    uid, email = d["uid"], (d.get("email") or "").lower()
+    name = d.get("name") or email.split("@")[0]
+    ev = bool(d.get("email_verified"))
+    conn = get_conn(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id FROM users WHERE firebase_uid=%s", (uid,))
+        row = cur.fetchone()
+        if not row:
+            cur.execute("SELECT id FROM users WHERE email=%s", (email,))
+            legacy = cur.fetchone()
+            if legacy:
+                if not ev:
+                    raise HTTPException(403, "Hay xac minh email truoc khi lien ket tai khoan cu")
+                row = legacy
+        if row:   # gồm cả tài khoản cũ cùng email → liên kết
+            user_id = row["id"]
+            cur.execute("UPDATE users SET firebase_uid=%s, email_verified=%s WHERE id=%s", (uid, ev, user_id))
+        else:
+            user_id = str(uuid.uuid4())
+            cur.execute("INSERT INTO users (id,email,name,password_hash,firebase_uid,email_verified) "
+                        "VALUES (%s,%s,%s,'',%s,%s)", (user_id, email, name, uid, ev))
+        conn.commit()
+        return {"token": make_token(user_id, email, ev),
+                "user": {"id": user_id, "email": email, "name": name, "email_verified": ev}}
+    finally:
+        cur.close(); conn.close()
 @app.get("/places")
 def list_places(
-    campus: str = "q5",
-    budget: int = DEFAULT_BUDGET,
-    radius_m: int = DEFAULT_RADIUS_M,
+   campus: str = "q5",
+    budget: Optional[int] = None,
+    radius_m: Optional[int] = None,
     food: Optional[str] = None,
     cuisine: Optional[str] = None,
+
 ):
     if campus not in CAMPUSES:
         raise HTTPException(400, "campus phai la q5 hoac lang")
@@ -387,9 +637,12 @@ def list_places(
     try:
         sql = (
             "SELECT id, name, campus, lat, lng, price_min, price_max, cuisine, address, hours_text AS hours "
-            "FROM places WHERE campus = %s AND price_min <= %s"
+            "FROM places WHERE campus = %s"
         )
-        params: list[Any] = [campus, budget]
+        params: list[Any] = [campus]
+        if budget is not None:
+            sql += " AND price_min <= %s"
+            params.append(budget)
 
         food_target = food or cuisine
         if food_target:
@@ -404,6 +657,20 @@ def list_places(
 
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
+
+        dish_names: dict[int, list[str]] = {}
+        if rows:
+            fmt = ",".join(["%s"] * len(rows))
+            try:
+                cur.execute(
+                    f"SELECT place_id, name FROM dishes "
+                    f"WHERE place_id IN ({fmt}) AND is_available = 1",
+                    [r["id"] for r in rows],
+                )
+                for d in cur.fetchall():
+                    dish_names.setdefault(d["place_id"], []).append(d["name"])
+            except Exception:
+                pass
     finally:
         cur.close()
         conn.close()
@@ -412,7 +679,7 @@ def list_places(
     for p in rows:
         lat, lng = float(p["lat"]), float(p["lng"])
         meters = haversine(origin["lat"], origin["lng"], lat, lng)
-        if meters > radius_m:
+        if radius_m is not None and meters > radius_m:
             continue
         out.append(
             {
@@ -421,14 +688,42 @@ def list_places(
                 "campus": p["campus"],
                 "lat": lat,
                 "lng": lng,
-                "price_min": int(p["price_min"]),
+                "price_min": int(p["price_min"]), 
                 "price_max": int(p["price_max"]),
                 "cuisine": p["cuisine"],
                 "address": p["address"],
                 "hours": p["hours"],
                 "meters": round(meters),
+                "dish_names": dish_names.get(p["id"], []),
             }
         )
+#Auto relax 
+    if len(out) == 0 and radius_m is not None:
+         for p in rows:
+                lat, lng = float(p["lat"]), float(p["lng"])
+                meters = haversine(origin["lat"], origin["lng"], lat, lng)
+        
+                
+                if meters > radius_m*1.20:
+                    continue
+                out.append(
+                    {
+                        "id": p["id"],
+                        "name": p["name"],
+                        "campus": p["campus"],
+                        "lat": lat,
+                        "lng": lng,
+                        "price_min": int(p["price_min"]), 
+                        "price_max": int(p["price_max"]),
+                        "cuisine": p["cuisine"],
+                        "address": p["address"],
+                        "hours": p["hours"],
+                        "meters": round(meters),
+                        "dish_names": dish_names.get(p["id"], []),
+                    }
+                )
+
+
     out.sort(key=lambda x: x["meters"])
     return out
 
@@ -462,7 +757,7 @@ def list_reviews(place_id: Optional[int] = None):
 
 
 @app.post("/reviews")
-def add_review(body: ReviewIn, user: dict = Depends(current_user)):
+def add_review(body: ReviewIn, user: dict = Depends(verified_user)):
     conn = get_conn()
     cur = conn.cursor()
     try:
@@ -518,8 +813,8 @@ def toggle_save(place_id: int, user: dict = Depends(current_user)):
 
 class HistoryIn(BaseModel):
     campus: str
-    budget: int
-    radius_m: int
+    budget: Optional[int]
+    radius_m: Optional[int]
     query: str
 
 
@@ -593,11 +888,13 @@ class ChatBody(BaseModel):
     message: str
     campus: Optional[str] = None
     budget: Optional[int] = None
+    budget_unlimited: bool = False
     budget_is_default: Optional[bool] = False
     radius_m: Optional[int] = None
+    radius_unlimited: bool = False
     radius_is_default: Optional[bool] = False
-    food_type: Optional[str] = None
-    food_group: Optional[str] = None
+    food_name: Optional[str] = None
+    place_name: Optional[str] = None
     preference: Optional[str] = None
     cuisine: Optional[str] = None
     keywords: list[str] = Field(default_factory=list)
@@ -679,12 +976,14 @@ def chat(body: ChatBody):
 
     previous = {
         "campus": body.campus,
-        "budget": body.budget,
+        "budget": None if body.budget_is_default else body.budget,
+        "budget_unlimited": body.budget_unlimited,
         "budget_is_default": body.budget_is_default or False,
-        "radius_m": body.radius_m,
+        "radius_m": None if body.radius_is_default else body.radius_m,
+        "radius_unlimited": body.radius_unlimited,
         "radius_is_default": body.radius_is_default or False,
-        "food_type": body.food_type,
-        "food_group": body.food_group,
+        "food_name": body.food_name,
+        "place_name": body.place_name,
         "preference": body.preference,
         "cuisine": body.cuisine,
         "keywords": body.keywords,
@@ -694,10 +993,13 @@ def chat(body: ChatBody):
         "turn_count": body.turn_count or 0,
     }
 
+    normalized_message = normalize_text(body.message)
+    unlimited = {f"{key}_unlimited": True for key, pattern in UNLIMITED_PATTERNS.items()
+                 if pattern.search(normalized_message)}
     try:
         extracted = extract_intent(body.message, previous)
         extracted = validate_intent(extracted)
-        intent = merge_context(previous, extracted)
+        intent = merge_context(previous, extracted.model_copy(update=unlimited))
 
     except Exception as e:
         print(
@@ -706,7 +1008,6 @@ def chat(body: ChatBody):
         )
 
         # Chuyển văn bản về dạng không dấu để Regex dễ nhận diện
-        normalized_message = normalize_text(body.message)
 
         # Giữ lại ngữ cảnh trước đó
         intent = previous.copy()
@@ -719,26 +1020,21 @@ def chat(body: ChatBody):
             intent["campus"] = "lang"
 
         # Nhận diện ngân sách – dùng normalizer (hỗ trợ 200000, 200k, v.v.)
-        money = parse_money(body.message)  # dùng text gốc (có dấu)
+        food_res = fallback_extract_food(body.message)
+        budget_message = body.message
+        if food_res.place_name:
+            budget_message = budget_message.replace(food_res.place_name, "", 1)
+        money = parse_money(budget_message)
         if money is None:
-            money = parse_money(normalized_message)  # fallback không dấu
+            money = parse_money(normalize_text(budget_message))
 
-        if money is not None:
-            intent["budget"] = money
-            intent["budget_is_default"] = False
-
-        # Nhận diện bán kính
         radius = parse_radius(normalized_message)
-        if radius is not None:
-            intent["radius_m"] = radius
-            intent["radius_is_default"] = False
 
         # Fallback nhận diện món ăn (Food Understanding - không dùng danh sách cứng)
-        food_res = fallback_extract_food(body.message)
-        if food_res.food_type:
-            intent["food_type"] = food_res.food_type
-        if food_res.food_group:
-            intent["food_group"] = food_res.food_group
+        if food_res.food_name:
+            intent["food_name"] = food_res.food_name
+        if food_res.place_name:
+            intent["place_name"] = food_res.place_name
         if food_res.preference:
             intent["preference"] = food_res.preference
 
@@ -767,67 +1063,73 @@ def chat(body: ChatBody):
             intent["emotion"] = {"category": emo_cat, "confidence": 0.85, "wants_food_suggestion": wants_food}
             intent["emotion_turn"] = turn
 
-        # Áp dụng giá trị mặc định cho intent tìm kiếm nếu chưa có
-        is_search = intent.get("intent", "search_food") in ("search_food", "refine_search", "recommendation")
-        if is_search:
-            if intent.get("budget") is None:
-                intent["budget"] = DEFAULT_BUDGET
-                intent["budget_is_default"] = True
-            if intent.get("radius_m") is None:
-                intent["radius_m"] = DEFAULT_RADIUS_M
-                intent["radius_is_default"] = True
+        merge_limits(intent, {"budget": money, "radius_m": radius, **unlimited})
 
     # --- Xác định reply ---
     detected_intent = intent.get("intent", "search_food")
-    food_key = intent.get("food_type")
-    food_display = food_key.replace("_", " ").title() if food_key else None
+    food_display = intent.get("food_name") or ""
 
     # Trường hợp emotion-based: trả lời cảm xúc nếu không đủ thông tin tìm kiếm
     emotion_reply = _build_emotion_reply(intent)
 
-    if detected_intent == "emotion_based_food_suggestion" and emotion_reply:
+    if detected_intent == "emotion_based_food_suggestion" and emotion_reply and not intent.get("place_name"):
         reply = emotion_reply
         ready = False
 
-    elif not intent.get("campus"):
+    elif not intent.get("campus") and not intent.get("place_name"):
         # Nếu có cảm xúc, hỏi kèm theo ngữ cảnh cảm xúc
         if emotion_reply:
             reply = emotion_reply
         elif food_display:
-            reply = f"Bạn muốn tìm quán {food_display} ở cơ sở Quận 5 hay Làng Đại học?"
+            reply = f"Bạn muốn tìm {food_display} ở cơ sở Quận 5 hay Làng Đại học?"
         else:
             reply = "Bạn muốn tìm quán ở cơ sở Quận 5 hay Làng Đại học?"
         ready = False
 
-    elif not intent.get("budget"):
+    elif not intent.get("budget") and not intent.get("budget_unlimited"):
         reply = "Ngân sách tối đa mỗi người của bạn là bao nhiêu?"
         ready = False
 
-    elif not intent.get("radius_m"):
+    elif not intent.get("radius_m") and not intent.get("radius_unlimited"):
         reply = "Bạn muốn tìm quán trong khoảng cách bao xa?"
         ready = False
 
     else:
-        food_part = f"quán {food_display} " if food_display else ""
-        pref_part = f"(vị: {intent['preference']}) " if intent.get("preference") else ""
-        b_val = intent['budget']
-        b_part = f"ngân sách mặc định: {b_val:,}đ" if intent.get("budget_is_default") else f"ngân sách: {b_val:,}đ"
-        r_val = intent['radius_m']
-        r_part = f"khoảng cách mặc định: {r_val}m" if intent.get("radius_is_default") else f"khoảng cách: {r_val}m"
-        campus_label = "Quận 5" if intent['campus'] == "q5" else "Làng Đại học"
-
-        reply = f"Đã hiểu yêu cầu! Tìm {food_part}{pref_part}quanh {campus_label}, {b_part}, {r_part}."
+        details = []
+        if food_display:
+            details.append(f"món {food_display}")
+        if intent.get("place_name"):
+            details.append(f"quán {intent['place_name']}")
+        if intent.get("campus") in CAMPUSES:
+            campus_label = "Quận 5" if intent["campus"] == "q5" else "Làng Đại học"
+            details.append(f"khu vực {campus_label}")
+        if intent.get("preference"):
+            details.append(f"sở thích {intent['preference']}")
+        budget_label = "ngân sách mặc định" if intent.get("budget_is_default") else "ngân sách"
+        radius_label = "bán kính mặc định" if intent.get("radius_is_default") else "bán kính"
+        if intent.get("budget_unlimited"):
+            details.append("không giới hạn giá")
+        else:
+            budget_text = f"{intent['budget']:,}".replace(",", ".")
+            details.append(f"{budget_label} {budget_text}đ")
+        if intent.get("radius_unlimited"):
+            details.append("không giới hạn bán kính")
+        else:
+            details.append(f"{radius_label} {intent['radius_m']} m")
+        reply = "Mình đã ghi nhận " + ", ".join(details) + "."
         ready = True
 
     return {
         "ready": ready,
         "campus": intent.get("campus"),
         "budget": intent.get("budget"),
+        "budget_unlimited": intent.get("budget_unlimited", False),
         "budget_is_default": intent.get("budget_is_default", False),
         "radius_m": intent.get("radius_m"),
+        "radius_unlimited": intent.get("radius_unlimited", False),
         "radius_is_default": intent.get("radius_is_default", False),
-        "food_type": intent.get("food_type"),
-        "food_group": intent.get("food_group"),
+        "food_name": intent.get("food_name"),
+        "place_name": intent.get("place_name"),
         "preference": intent.get("preference"),
         "reply": reply,
         # Trả về emotion context để frontend lưu và gửi lại lượt sau
@@ -854,7 +1156,7 @@ class ContributeIn(BaseModel):
 def contribute_place(
     body: ContributeIn,
     request: Request,
-    user: dict = Depends(current_user),
+    user: dict = Depends(verified_user),
 ):
     """Dong gop quan + rate limit + chong trung."""
     if body.campus not in CAMPUSES:
@@ -931,7 +1233,7 @@ async def menu_scan(
     request: Request,
     files: list[UploadFile] = File(default=[]),
     file: Optional[UploadFile] = File(default=None),
-    user: dict = Depends(current_user),
+    user: dict = Depends(verified_user),
 ):
     """Nhan 1..10 anh (cac trang cua cung 1 menu), Gemini Vision doc -> mon + gia + thong tin quan."""
     ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
@@ -1007,7 +1309,7 @@ def contribute_with_menu(
     body: ContributeWithMenuIn,
     request: Request,
     background_tasks: BackgroundTasks,
-    user: dict = Depends(current_user),
+    user: dict = Depends(verified_user),
 ):
     """Tao quan + luu danh sach mon (sau khi user xac nhan ket qua OCR)."""
     if body.campus not in CAMPUSES:
@@ -1043,8 +1345,6 @@ def contribute_with_menu(
             if cur.fetchone():
                 raise HTTPException(409, "Quan da ton tai (trung ten + co so).")
 
-            menu_names = [name for dish in body.dishes[:150] for name in _clean_ings(dish.ingredients)]
-            catalog = resolve_names(menu_names)
             note = (body.note or "").strip()
             address = body.address.strip()
             if note:
@@ -1060,9 +1360,9 @@ def contribute_with_menu(
             )
             place_id = cur.lastrowid
 
-            dish_ids = []
+            missing_ingredient_ids = []
             for d in body.dishes[:150]:
-                ingredients = canonical_ingredients(_clean_ings(d.ingredients), catalog)
+                ingredients = _clean_ings(d.ingredients)
                 cur.execute(
                     "INSERT INTO dishes (place_id, name, price, ingredients, description, image_url) "
                     "VALUES (%s,%s,%s,%s,%s,%s)",
@@ -1076,15 +1376,14 @@ def contribute_with_menu(
                     ),
                 )
                 if not ingredients:
-                    dish_ids.append(cur.lastrowid)
+                    missing_ingredient_ids.append(cur.lastrowid)
             mm = body.menu_meta
             if mm and mm.hours:
                 cur.execute("UPDATE places SET hours_text = %s WHERE id = %s", (mm.hours.strip()[:80], place_id))
             conn.commit()
             record_contribute(user["id"], ip or "unknown")
-            if dish_ids:
-                # Gemini work runs after the response, so menu submission remains quick.
-                background_tasks.add_task(analyze_dishes_background, dish_ids)
+            if missing_ingredient_ids:
+                background_tasks.add_task(analyze_dishes_background, missing_ingredient_ids)
             return {
                 "ok": True,
                 "id": place_id,
@@ -1101,28 +1400,6 @@ def contribute_with_menu(
             conn.close()
     finally:
         queue_leave()
-
-
-@app.post("/dishes/analyze-missing")
-def analyze_missing_dish_ingredients(
-    limit: int = 20,
-    user: dict = Depends(current_user),
-):
-    """Analyze a small batch of existing dishes with no saved ingredient list."""
-    if not 1 <= limit <= 50:
-        raise HTTPException(400, "limit phai nam trong khoang 1-50")
-    try:
-        results = analyze_missing_batch(limit)
-    except Exception as exc:
-        raise HTTPException(503, f"Khong the phan tich thanh phan mon an: {exc}") from exc
-    return JSONResponse(
-        content={
-            "processed": len(results),
-            "analyzed": sum(1 for item in results if item["status"] == "analyzed"),
-            "results": results,
-        },
-        media_type="application/json; charset=utf-8",
-    )
 
 
 @app.get("/places/saved")

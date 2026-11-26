@@ -17,7 +17,7 @@ function authHeaders(): HeadersInit {
     : { "Content-Type": "application/json" };
 }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+export async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: { ...authHeaders(), ...(init?.headers ?? {}) },
@@ -47,6 +47,7 @@ export type ApiPlace = {
   address: string;
   hours: string;
   meters?: number;
+  dish_names?: string[];
 };
 
 export type ApiUser = { id: string; email: string; name: string };
@@ -55,12 +56,10 @@ export async function health() {
   return req<{ status: string; mysql: boolean }>("/health");
 }
 
-export async function fetchPlaces(campus: string, budget: number, radiusM: number) {
-  const q = new URLSearchParams({
-    campus,
-    budget: String(budget),
-    radius_m: String(radiusM),
-  });
+export async function fetchPlaces(campus: string, budget?: number, radiusM?: number) {
+  const q = new URLSearchParams({ campus });
+  if (budget != null) q.set("budget", String(budget));
+  if (radiusM != null) q.set("radius_m", String(radiusM));
   return req<ApiPlace[]>(`/places?${q}`);
 }
 
@@ -78,6 +77,19 @@ export async function login(email: string, password: string) {
   const data = await req<{ token: string; user: ApiUser }>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
+  });
+  localStorage.setItem("hcmus_api_token", data.token);
+  localStorage.setItem("hcmus_api_user", JSON.stringify(data.user));
+  return data;
+}
+
+export async function loginWithFirebaseToken(idToken: string) {
+  const data = await req<{
+    token: string;
+    user: ApiUser & { email_verified?: boolean };
+  }>("/auth/firebase", {
+    method: "POST",
+    body: JSON.stringify({ id_token: idToken }),
   });
   localStorage.setItem("hcmus_api_token", data.token);
   localStorage.setItem("hcmus_api_user", JSON.stringify(data.user));
@@ -132,15 +144,15 @@ export async function fetchHistory() {
     {
       id: number;
       campus: string;
-      budget: number;
-      radius_m: number;
+      budget: number | null;
+      radius_m: number | null;
       query: string;
       created_at: string;
     }[]
   >("/history");
 }
 
-export async function postHistory(campus: string, budget: number, radiusM: number, query: string) {
+export async function postHistory(campus: string, budget: number | null, radiusM: number | null, query: string) {
   return req<{ ok: boolean }>("/history", {
     method: "POST",
     body: JSON.stringify({ campus, budget, radius_m: radiusM, query }),
@@ -157,12 +169,14 @@ export async function postChat(
   message: string,
   slots: {
     campus?: string;
-    budget?: number;
+    budget?: number | null;
+    budget_unlimited?: boolean;
     budget_is_default?: boolean;
-    radius_m?: number;
+    radius_m?: number | null;
+    radius_unlimited?: boolean;
     radius_is_default?: boolean;
-    food_type?: string;
-    food_group?: string;
+    food_name?: string | null;
+    place_name?: string | null;
     preference?: string;
     emotion?: EmotionContext;
     emotion_turn?: number;
@@ -172,12 +186,14 @@ export async function postChat(
   return req<{
     ready: boolean;
     campus?: string;
-    budget?: number;
+    budget?: number | null;
+    budget_unlimited?: boolean;
     budget_is_default?: boolean;
-    radius_m?: number;
+    radius_m?: number | null;
+    radius_unlimited?: boolean;
     radius_is_default?: boolean;
-    food_type?: string;
-    food_group?: string;
+    food_name?: string | null;
+    place_name?: string | null;
     preference?: string;
     reply: string;
     emotion?: EmotionContext;
@@ -295,3 +311,14 @@ export const saveSurveyApi = (a: SurveyAnswers) =>
   req<UserPreference>("/api/heana/onboarding", { method: "POST", body: JSON.stringify(a) });
 
 export const fetchPreferenceApi = () => req<UserPreference>("/api/heana/preferences");
+
+export const fetchGoogleReviews = (placeId: number) =>
+  req<{
+    found: boolean;
+    rating?: number;
+    count?: number;
+    url?: string;
+    reviews: { author: string; rating: number; when: string; text: string }[];
+  }>(`/places/${placeId}/google-reviews`);
+
+  

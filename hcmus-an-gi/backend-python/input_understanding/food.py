@@ -1,23 +1,15 @@
-"""
-food.py – Chuẩn hóa và xử lý thông tin món ăn (Food Understanding).
-
-Không sử dụng danh sách liệt kê cứng (hardcoded dictionary).
-Hệ thống sử dụng Gemini LLM để nhận diện tên món, nhóm món và sở thích;
-module này chịu trách nhiệm:
-1. Thuật toán slugify động: chuyển bất kỳ tên món tiếng Việt sang canonical slug.
-2. Bóc tách từ khóa tìm kiếm động để truy vấn cơ sở dữ liệu (places.cuisine, places.name).
-3. Fallback bóc tách nhẹ khi mất kết nối Gemini (dựa trên cấu trúc ngữ pháp tiếng Việt).
-"""
+"""Food and place name extraction and database search helpers."""
 
 import re
 import unicodedata
 from typing import Optional, NamedTuple
 
+from .context import UNLIMITED_PATTERNS
+
 
 class FoodExtractionResult(NamedTuple):
-    food_type: Optional[str]
     food_name: Optional[str]
-    food_group: Optional[str]
+    place_name: Optional[str]
     preference: Optional[str]
 
 
@@ -61,11 +53,11 @@ def slugify_food(food_name: Optional[str]) -> Optional[str]:
     return slug or None
 
 
-def extract_search_keywords(food_name: Optional[str], food_type: Optional[str] = None) -> list[str]:
+def extract_search_keywords(food_name: Optional[str], search_slug: Optional[str] = None) -> list[str]:
     """
     Trích xuất động các từ khóa tìm kiếm để khớp vào places.cuisine và places.name trong MySQL.
 
-    Không dùng mapping tĩnh; phân tích trực tiếp từ food_name và food_type:
+    Không dùng mapping tĩnh; phân tích trực tiếp từ food_name và search_slug:
     - Lấy cụm tên gốc (ví dụ: "cơm tấm")
     - Lấy các danh từ chính (ví dụ: "cơm", "tấm", "phở", "bún")
     """
@@ -82,8 +74,8 @@ def extract_search_keywords(food_name: Optional[str], food_type: Optional[str] =
                 if len(w) >= 2 and w.lower() not in ("quán", "tiệm", "ăn", "ngon", "ở", "gần"):
                     keywords.append(w)
 
-    if food_type:
-        parts = food_type.split("_")
+    if search_slug:
+        parts = search_slug.split("_")
         for p in parts:
             if len(p) >= 2 and p not in ("quan", "tiem", "an", "ngon", "o", "gan"):
                 keywords.append(p)
@@ -105,40 +97,35 @@ def extract_search_keywords(food_name: Optional[str], food_type: Optional[str] =
 # Dựa trên cấu trúc ngữ pháp tiếng Việt: "ăn <món>", "quán <món>", "thèm <món>"
 # ---------------------------------------------------------------------------
 
-_FOOD_VERB_PATTERN = re.compile(
-    r"""
-    (?:
-        mu[oố]n\s+[aă]n
-        | t[iì]m(?:\s+(?:qu[aá]n|m[oó]n|d[oồ]))?
-        | qu[aá]n
-        | [aă]n
-        | th[eè]m
-        | g[oợ]i\s+[yý]\s+m[oó]n
-        | d[oổ]i\s+sang
-    )
-    \s+
-    ([a-zA-ZàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐ\s]{2,30})
-    """,
-    re.IGNORECASE | re.VERBOSE,
+# Match boundaries on the original text so names retain accents and punctuation.
+_BOUNDARY = re.compile(
+    r"[,;!?]|\s+(?:ở|tại|gần|gan|dưới|duoi|trong bán kính|ngân sách|ngan sach|"
+    r"cho (?:tôi|mình)|giúp tôi|được không|được ko|quanh|ngon ở|giá|gia|không cay|khong cay|nhé|nha|giúp mình|quận\s+\d+|q\d+)\b"
+    r"|\s+(?:(?:tầm|khoảng|tam|khoang)\s+)?\d+(?:[.,]\d+)?\s*(?:k|đ|nghìn|ngàn|km|m)\b", re.I
+)
+_VENUE = re.compile(r"\b(?:(ở|tại|o|tai)\s+)?(quán|quan|tiệm|tiem|nhà hàng|nha hang)\s+", re.I)
+_FOOD = re.compile(
+    r"\b(?:muốn ăn|muon an|ăn|an|thèm|them|đổi sang|doi sang|gợi ý món|goi y mon|"
+    r"tìm|tim|bán|ban)\s+(?:(?:quán|quan|món|mon)\s+)?(?:(?:bán|ban)\s+)?", re.I
 )
 
-_STOPWORDS = {
-    "o", "ở", "tai", "tại", "gan", "gần", "truong", "trường",
-    "duoi", "dưới", "tam", "tầm", "khoang", "khoảng",
-    "gia", "giá", "ngan", "ngân", "sach", "sách", "cho",
-    "q5", "lang", "quan 5", "quận 5", "lang dai hoc", "làng đại học",
-    "khong", "không", "gi", "gì", "nao", "nào", "di", "đi", "nhe", "nhé",
-}
+
+def _name(fragment: str) -> Optional[str]:
+    value = _BOUNDARY.split(" " + fragment.strip(), maxsplit=1)[0].strip(" \t\n.,!?")
+    return value or None
 
 
 def fallback_extract_food(text: str) -> FoodExtractionResult:
-    """
-    Trích xuất món ăn dự phòng dựa trên cấu trúc câu khi không có Gemini.
-    Không bị giới hạn bởi danh sách món liệt kê.
-    """
-    if not text:
-        return FoodExtractionResult(None, None, None, None)
-
+    text = unicodedata.normalize("NFC", text.strip())
+    # Remove filter clauses before extracting a dish or venue from the same turn.
+    normalized = remove_accents(text).lower()
+    spans = [match.span() for pattern in UNLIMITED_PATTERNS.values()
+             for match in pattern.finditer(normalized)]
+    if spans:
+        chars = list(text)
+        for start, end in spans:
+            chars[start:end] = "," * (end - start)
+        text = "".join(chars)
     lower = text.lower()
 
     # Nhận diện sở thích cơ bản nếu có trong câu
@@ -152,45 +139,30 @@ def fallback_extract_food(text: str) -> FoodExtractionResult:
     elif "thanh đạm" in lower or "thanh dam" in lower:
         preference = "thanh_dam"
 
-    # Nhận diện nhóm món cơ bản nếu có trong câu
-    food_group = None
-    if "món nước" in lower or "mon nuoc" in lower:
-        food_group = "mon_nuoc"
-    elif "đồ chiên" in lower or "do chien" in lower:
-        food_group = "do_chien"
-    elif "đồ nướng" in lower or "do nuong" in lower:
-        food_group = "do_nuong"
-    elif "ăn vặt" in lower or "an vat" in lower:
-        food_group = "do_an_vat"
-    elif "đồ uống" in lower or "do uong" in lower or "nước uống" in lower or "nuoc uong" in lower:
-        food_group = "do_uong"
+    place_name = None
+    for marker in _VENUE.finditer(text):
+        tail = text[marker.end():]
+        sale = re.search(r"\s+(?:bán|ban|có bán)\s+", tail, re.I)
+        candidate = _name(tail[:sale.start()] if sale else tail)
+        if not candidate or candidate[0].isdigit() or re.match(r"(?:bán|ban)\b", candidate, re.I):
+            continue
+        if marker[1] or candidate[0].isupper() or sale:
+            place_name = candidate
+            text = text[:marker.start()] + (" bán " + tail[sale.end():] if sale else "")
+            break
 
-    # Trích xuất cụm danh từ món ăn
-    food_name = None
-    food_type = None
-
-    m = _FOOD_VERB_PATTERN.search(text)
-    if m:
-        candidate = m.group(1).strip()
-        tokens = candidate.split()
-        clean_tokens = []
-        for tok in tokens:
-            if tok.lower() in _STOPWORDS:
-                break
-            if any(c.isdigit() for c in tok):
-                break
-            clean_tokens.append(tok)
-
-        if clean_tokens:
-            cand_name = " ".join(clean_tokens)
-            # Nếu cụm từ không đơn thuần là tên nhóm món
-            if cand_name.lower() not in ("nước", "món nước", "đồ chiên", "đồ nướng", "ăn vặt", "đồ ăn vặt"):
-                food_name = cand_name
-                food_type = slugify_food(food_name)
-
-    return FoodExtractionResult(
-        food_type=food_type,
-        food_name=food_name,
-        food_group=food_group,
-        preference=preference,
-    )
+    cue = _FOOD.search(text)
+    food_name = _name(text[cue.end():]) if cue else None
+    if not cue:
+        # Accept short standalone names, but exclude conversational and filter updates.
+        generic = re.search(
+            r"\b(?:hôm nay|mình|tôi|buồn|vui|stress|mệt|deadline|ngân sách|bán kính|"
+            r"tăng|giảm|quận|làng|xin chào|cảm ơn|không|muốn|đang|tìm|tim|tại|tai|chỉ|khong|thu duc|linh trung|nguyễn văn cừ|q\d+)\b", text, re.I
+        )
+        if not generic and text[:1].isalpha() and not text.rstrip().endswith("?"):
+            food_name = _name(text)
+    if food_name and re.match(
+        r"^(?:gì|gi|quán|quan|trong bán kính|trường|ở đâu|ngon|gần đây|chỗ ăn)\b", food_name, re.I
+    ):
+        food_name = None
+    return FoodExtractionResult(food_name, place_name, preference)

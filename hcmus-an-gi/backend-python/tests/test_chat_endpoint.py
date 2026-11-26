@@ -21,6 +21,32 @@ from input_understanding.schemas import ExtractedIntent, EmotionInfo
 client = TestClient(app)
 
 
+def test_named_place_after_campus_question():
+    with patch("app.extract_intent", side_effect=RuntimeError("offline")):
+        first = client.post("/chat", json={"message": "tôi muốn ăn cơm tấm"}).json()
+        assert not first["ready"]
+        second = client.post("/chat", json={**first, "message": "ở quán cơm tấm 123"}).json()
+    assert second["ready"] and second["campus"] is None
+    assert second["place_name"] == "cơm tấm 123"
+    assert second["food_name"] == "cơm tấm"
+    assert second["budget"] == first["budget"]
+
+
+@pytest.mark.parametrize("message, expected_name, asks_campus", [
+    ("Tìm quán Cô Ba", "Cô Ba", False),
+    ("Muốn ăn mừng ở quán Cô Ba", "Cô Ba", False),
+    ("Tìm quán bán bánh mì que", None, True),
+])
+def test_campus_prompt_depends_on_named_place(message, expected_name, asks_campus):
+    with patch("app.extract_intent", side_effect=RuntimeError("offline")):
+        response = client.post("/chat", json={"message": message})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["campus"] is None
+    assert data["place_name"] == expected_name
+    assert ("cơ sở" in data["reply"].lower()) == asks_campus
+
+
 # ---------------------------------------------------------------------------
 # PHẦN 1: TEST BUDGET RECOGNITION QUA /chat
 # ---------------------------------------------------------------------------
@@ -250,3 +276,26 @@ class TestChatMultiTurnContext:
             # Cảm xúc stress vẫn được lưu giữ trong background context
             assert data3["emotion"] is not None
             assert data3["emotion"]["category"] == "stress"
+
+
+@pytest.mark.parametrize("offline", [True, False])
+def test_unlimited_filters_survive_followups_and_can_be_replaced(offline):
+    def send(message, previous, **slots):
+        with patch("app.extract_intent", side_effect=RuntimeError("offline") if offline else None,
+                   return_value=ExtractedIntent(**slots)):
+            response = client.post("/chat", json={**previous, "message": message})
+        assert response.status_code == 200
+        return response.json()
+
+    first = send("Hôm nay tôi muốn ăn mì", {}, food_name="mì")
+    both = send("Ở Quận 5, không quan tâm về giá cả hay khoảng cách gì hết", first, campus="q5")
+    assert both["ready"] and both["food_name"] == "mì"
+    assert both["budget"] is None and both["radius_m"] is None
+    assert both["budget_unlimited"] and both["radius_unlimited"]
+    priced = send("Dưới 40k thôi", both, budget=40000)
+    assert priced["budget"] == 40000 and not priced["budget_unlimited"]
+    assert priced["radius_m"] is None and priced["radius_unlimited"]
+    nearby = send("Giá nào cũng được nhưng trong 500m", priced, radius_m=500)
+    assert nearby["radius_m"] == 500 and not nearby["radius_unlimited"]
+    assert nearby["budget"] is None and nearby["budget_unlimited"]
+    assert nearby["food_name"] == "mì" and nearby["campus"] == "q5"
