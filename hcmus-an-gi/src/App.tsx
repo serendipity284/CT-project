@@ -893,7 +893,7 @@ export default function App() {
     }
   }
 
-  async function submitContribution(e: React.FormEvent) {
+  async function submitContribution(e: React.SubmitEvent) {
     e.preventDefault();
     if (!user) {
       setContribMsg("Cần đăng nhập để đóng góp quán.");
@@ -1826,7 +1826,7 @@ function LoginPage({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function submit(e: React.FormEvent) {
+  async function submit(e: React.SubmitEvent) {
     e.preventDefault();
     setError("");
     setBusy(true);
