@@ -497,7 +497,10 @@ def login(body: LoginIn):
         token = make_token(row["id"], row["email"], bool(row.get("email_verified")))
         return {
             "token": token,
-            "user": {**_public_user(row), "email_verified": bool(row.get("email_verified"))},
+            "user": {
+                **_public_user(row),
+                "email_verified": bool(row.get("email_verified")),
+            },
         }
     finally:
         cur.close()
