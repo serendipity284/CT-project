@@ -83,6 +83,19 @@ export async function login(email: string, password: string) {
   return data;
 }
 
+export async function loginWithFirebaseToken(idToken: string) {
+  const data = await req<{
+    token: string;
+    user: ApiUser & { email_verified?: boolean };
+  }>("/auth/firebase", {
+    method: "POST",
+    body: JSON.stringify({ id_token: idToken }),
+  });
+  localStorage.setItem("hcmus_api_token", data.token);
+  localStorage.setItem("hcmus_api_user", JSON.stringify(data.user));
+  return data;
+}
+
 export function logoutApi() {
   localStorage.removeItem("hcmus_api_token");
   localStorage.removeItem("hcmus_api_user");
