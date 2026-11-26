@@ -49,6 +49,65 @@ function explain(
  * thường nằm đầu danh sách nhưng quán điểm thấp vẫn có cơ hội lọt vào.
  * Ưu tiên quán chưa gợi ý (excludeIds); nếu không đủ `count` thì bù thêm từ các quán đã gợi ý.
  */
+
+type Ratings = Record<number, { avg: number; count: number }>;
+
+/** Đổi true -> false nếu muốn giá CAO xếp trước. */
+const PRICE_CHEAP_FIRST = true;
+
+/**
+ * Sắp xếp theo mức quan tâm của khách (trọng số khảo sát):
+ * tiêu chí có trọng số lớn nhất là tiêu chí chính, bằng nhau thì xét tiêu chí tiếp theo.
+ *  - price:    giá min (quán chưa có giá xếp cuối)
+ *  - distance: số mét tới cơ sở (gần xếp trước)
+ *  - quality:  điểm đánh giá trung bình (cao xếp trước)
+ * Nếu 3 trọng số bằng nhau (khảo sát "Sao cũng được" hoặc chưa làm) thì giữ nguyên thứ tự bốc.
+ */
+function sortByPreference(
+    list: Suggestion[],
+    ratings: Ratings,
+    pref: UserPreference,
+): Suggestion[] {
+    const num = (a: number, b: number) => (a === b ? 0 : a - b);
+
+    const criteria = [
+        {
+            w: pref.w_price,
+            cmp: (a: Suggestion, b: Suggestion) => {
+                const pa = a.place.price_max > 0 ? a.place.price_min : Infinity;
+                const pb = b.place.price_max > 0 ? b.place.price_min : Infinity;
+                if (pa === Infinity || pb === Infinity) return num(pa === Infinity ? 1 : 0, pb === Infinity ? 1 : 0);
+                return PRICE_CHEAP_FIRST ? num(pa, pb) : num(pb, pa);
+            },
+        },
+        {
+            w: pref.w_distance,
+            cmp: (a: Suggestion, b: Suggestion) =>
+                num(
+                    (a.place as Place & { meters: number }).meters,
+                    (b.place as Place & { meters: number }).meters,
+                ),
+        },
+        {
+            w: pref.w_quality,
+            cmp: (a: Suggestion, b: Suggestion) =>
+                num(ratings[b.place.id]?.avg ?? 0, ratings[a.place.id]?.avg ?? 0),
+        },
+    ];
+
+    const ws = criteria.map((c) => c.w);
+    if (Math.max(...ws) - Math.min(...ws) < 1e-6) return list; // không có ưu tiên rõ ràng
+
+    // sort ổn định: trọng số lớn trước; trọng số bằng nhau giữ thứ tự price -> distance -> quality
+    const ordered = [...criteria].sort((a, b) => b.w - a.w);
+    return [...list].sort((a, b) => {
+        for (const c of ordered) {
+            const d = c.cmp(a, b);
+            if (d) return d;
+        }
+        return 0;
+    });
+}
 export function suggestRandomPlaces(
   candidates: (Place & { meters: number })[], // chính là `ranked` trong App.tsx
   ratings: Record<number, { avg: number; count: number }>,
@@ -82,7 +141,7 @@ export function suggestRandomPlaces(
   drawFrom(fresh);
   if (out.length < count) drawFrom(seen); // hết quán mới -> bù từ quán cũ
 
-  return out;
+    return sortByPreference(out, ratings, pref);
 }
 
 /** Map Place -> RawPlace rồi chấm điểm bằng công thức có sẵn trong heana-ranking. */
