@@ -5,6 +5,7 @@ HEANA Search Service - Orchestrates Hard Filter + Soft Ranking + Preference
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any, Optional
 
 from services.ranking import (
@@ -15,7 +16,31 @@ from services.ranking import (
     suggest_relaxation,
 )
 
+def preference_from_choices(q1: str, q2: Optional[str], allergies_text: str) -> UserPreference:
+    FACTORS = ["price", "distance", "quality"]
+    PRIMARY, SECONDARY, REST, FRESH = 0.45, 0.32, 0.15, 0.05
 
+    if q1 == "any":
+        w = {f: (1 - FRESH) / 3 for f in FACTORS}
+    else:
+        others = [f for f in FACTORS if f != q1]
+        w = {q1: PRIMARY}
+        if q2 and q2 != "any" and q2 in others:
+            w[q2] = SECONDARY
+            w[next(f for f in others if f != q2)] = REST
+        else:
+            half = (1 - FRESH - PRIMARY) / 2
+            for f in others:
+                w[f] = half
+
+    allergies = [a.strip().lower() for a in re.split(r"[,;\n]", allergies_text or "") if a.strip()]
+    return UserPreference(
+        w_price=round(w["price"], 3),
+        w_distance=round(w["distance"], 3),
+        w_quality=round(w["quality"], 3),
+        w_freshness=FRESH,
+        allergies=allergies,
+    )
 def rows_to_candidates(
     place_rows: list[dict],
     dish_rows: list[dict],

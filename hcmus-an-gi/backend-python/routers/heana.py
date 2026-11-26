@@ -25,12 +25,14 @@ from models.schemas import (
     SearchRequest,
     SearchResponse,
     ExtractedIntent,
+    SurveyAnswers
 )
 from services.ranking import UserPreference
 from services.search_service import (
     candidate_to_dict,
     preference_from_survey,
     run_search,
+    preference_from_choices
 )
 from services.alley_routing import (
     AlleyGraph,
@@ -91,6 +93,14 @@ def fetch_dishes(place_ids: list[int]) -> list[dict]:
                 r["ingredients"] = []
     return rows
 
+def fetch_survey_done(user_id: str) -> bool:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT survey_done FROM user_preferences WHERE user_id=%s", (user_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return bool(row and row[0])
 
 def fetch_user_preference(user_id: str) -> UserPreference:
     conn = get_db_connection()
@@ -175,18 +185,11 @@ def fetch_alley_graph_for_place(place_id: int) -> AlleyGraph:
 
 
 # Auth helper (giả định dùng JWT giống app.py hiện tại)
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
-
+from auth_deps import decode_token
 
 def get_current_user_id(authorization: Optional[str] = Header(None)) -> Optional[str]:
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization.split(" ", 1)[1]
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("sub")
-    except JWTError:
-        return None
+    user = decode_token(authorization)
+    return user["id"] if user else None
 
 
 # ------------------------------------------------------------
@@ -195,18 +198,12 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> Optional
 
 @router.post("/onboarding", response_model=PreferenceOut)
 def submit_onboarding(
-    body: OnboardingSurvey,
+    body: SurveyAnswers,
     user_id: Optional[str] = Depends(get_current_user_id),
 ):
-    """Spec 1.1 - Khảo sát sở thích ngay sau khi tạo tài khoản."""
     if not user_id:
         raise HTTPException(401, "Cần đăng nhập để lưu preference.")
-    pref = preference_from_survey(
-        price_importance=body.price_importance,
-        distance_importance=body.distance_importance,
-        quality_importance=body.quality_importance,
-        allergies_text=body.allergies_text,
-    )
+    pref = preference_from_choices(body.q1, body.q2, body.allergies_text)
     save_user_preference(user_id, pref, survey_done=True)
     return PreferenceOut(
         w_price=pref.w_price,
@@ -229,7 +226,7 @@ def get_preferences(user_id: Optional[str] = Depends(get_current_user_id)):
         w_quality=pref.w_quality,
         w_freshness=pref.w_freshness,
         allergies=pref.allergies,
-        survey_done=True,
+        survey_done=fetch_survey_done(user_id),
     )
 
 

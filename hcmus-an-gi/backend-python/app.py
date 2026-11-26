@@ -22,7 +22,7 @@ from pathlib import Path
 
 import mysql.connector
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 import bcrypt
@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 
 from menu_scan import scan_menu_images
+from services.ingredient_analyzer import analyze_dishes_background
 from starlette.concurrency import run_in_threadpool
 from rate_limit import (
     check_contribute_allowed,
@@ -44,11 +45,28 @@ from rate_limit import (
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(ENV_PATH, override=True)
+
+from auth_deps import current_user, verified_user
 from input_understanding.extractor import extract_intent
 from input_understanding.validator import validate_intent
 from input_understanding.context import UNLIMITED_PATTERNS, merge_context, merge_limits
 from input_understanding.normalizer import normalize_budget, normalize_budget_text
 from input_understanding.food import slugify_food, extract_search_keywords, fallback_extract_food
+
+import firebase_admin
+from firebase_admin import credentials, auth as fb_auth
+
+_sa = (os.getenv("FIREBASE_SERVICE_ACCOUNT") or "").strip().strip('"').strip("'")
+if not firebase_admin._apps:
+    if not _sa:
+        raise RuntimeError("Khong doc duoc FIREBASE_SERVICE_ACCOUNT tu .env (kiem tra ten bien, file .env co luu chua)")
+    _sa_path = Path(_sa)
+    if not _sa_path.is_absolute():
+        _sa_path = Path(__file__).resolve().parent / _sa_path   # tinh theo thu muc cua app.py
+    if not _sa_path.exists():
+        raise RuntimeError(f"Khong thay file Firebase JSON tai: {_sa_path}")
+    firebase_admin.initialize_app(credentials.Certificate(str(_sa_path)))
+
 
 load_dotenv()
 
@@ -433,24 +451,15 @@ def haversine(a_lat, a_lng, b_lat, b_lng):
     return 2 * r * math.asin(min(1.0, math.sqrt(s)))
 
 
-def make_token(user_id: str, email: str) -> str:
+def make_token(user_id: str, email: str, ev: bool = False) -> str:
     payload = {
         "sub": user_id,
         "email": email,
+        "ev": ev,
         "exp": datetime.utcnow() + timedelta(days=7),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-
-def current_user(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Can dang nhap")
-    token = authorization[7:].strip()
-    try:
-        data = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return {"id": data["sub"], "email": data.get("email", "")}
-    except JWTError:
-        raise HTTPException(401, "Token khong hop le")
 
 
 class SignUpIn(BaseModel):
@@ -497,15 +506,20 @@ def login(body: LoginIn):
         row = cur.fetchone()
         if not row or not verify_password(body.password, row["password_hash"]):
             raise HTTPException(401, "Email hoac mat khau sai")
-        token = make_token(row["id"], row["email"])
+        token = make_token(row["id"], row["email"], bool(row.get("email_verified")))
         return {
             "token": token,
-            "user": _public_user(row),
+            "user": {
+                **_public_user(row),
+                "email_verified": bool(row.get("email_verified")),
+            },
         }
     finally:
         cur.close()
         conn.close()
 
+class FirebaseIn(BaseModel):
+    id_token: str
 GOOGLE_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
 
 
@@ -574,6 +588,38 @@ def google_reviews(place_id: int):
         ],
     }
 
+@app.post("/auth/firebase")
+def firebase_login(body: FirebaseIn):
+    try:
+        d = fb_auth.verify_id_token(body.id_token)
+    except Exception:
+        raise HTTPException(401, "Token Firebase không hợp lệ")
+    uid, email = d["uid"], (d.get("email") or "").lower()
+    name = d.get("name") or email.split("@")[0]
+    ev = bool(d.get("email_verified"))
+    conn = get_conn(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id FROM users WHERE firebase_uid=%s", (uid,))
+        row = cur.fetchone()
+        if not row:
+            cur.execute("SELECT id FROM users WHERE email=%s", (email,))
+            legacy = cur.fetchone()
+            if legacy:
+                if not ev:
+                    raise HTTPException(403, "Hay xac minh email truoc khi lien ket tai khoan cu")
+                row = legacy
+        if row:   # gồm cả tài khoản cũ cùng email → liên kết
+            user_id = row["id"]
+            cur.execute("UPDATE users SET firebase_uid=%s, email_verified=%s WHERE id=%s", (uid, ev, user_id))
+        else:
+            user_id = str(uuid.uuid4())
+            cur.execute("INSERT INTO users (id,email,name,password_hash,firebase_uid,email_verified) "
+                        "VALUES (%s,%s,%s,'',%s,%s)", (user_id, email, name, uid, ev))
+        conn.commit()
+        return {"token": make_token(user_id, email, ev),
+                "user": {"id": user_id, "email": email, "name": name, "email_verified": ev}}
+    finally:
+        cur.close(); conn.close()
 @app.get("/places")
 def list_places(
    campus: str = "q5",
@@ -711,7 +757,7 @@ def list_reviews(place_id: Optional[int] = None):
 
 
 @app.post("/reviews")
-def add_review(body: ReviewIn, user: dict = Depends(current_user)):
+def add_review(body: ReviewIn, user: dict = Depends(verified_user)):
     conn = get_conn()
     cur = conn.cursor()
     try:
@@ -1110,7 +1156,7 @@ class ContributeIn(BaseModel):
 def contribute_place(
     body: ContributeIn,
     request: Request,
-    user: dict = Depends(current_user),
+    user: dict = Depends(verified_user),
 ):
     """Dong gop quan + rate limit + chong trung."""
     if body.campus not in CAMPUSES:
@@ -1187,7 +1233,7 @@ async def menu_scan(
     request: Request,
     files: list[UploadFile] = File(default=[]),
     file: Optional[UploadFile] = File(default=None),
-    user: dict = Depends(current_user),
+    user: dict = Depends(verified_user),
 ):
     """Nhan 1..10 anh (cac trang cua cung 1 menu), Gemini Vision doc -> mon + gia + thong tin quan."""
     ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
@@ -1262,7 +1308,8 @@ class ContributeWithMenuIn(BaseModel):
 def contribute_with_menu(
     body: ContributeWithMenuIn,
     request: Request,
-    user: dict = Depends(current_user),
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(verified_user),
 ):
     """Tao quan + luu danh sach mon (sau khi user xac nhan ket qua OCR)."""
     if body.campus not in CAMPUSES:
@@ -1313,7 +1360,9 @@ def contribute_with_menu(
             )
             place_id = cur.lastrowid
 
+            missing_ingredient_ids = []
             for d in body.dishes[:150]:
+                ingredients = _clean_ings(d.ingredients)
                 cur.execute(
                     "INSERT INTO dishes (place_id, name, price, ingredients, description, image_url) "
                     "VALUES (%s,%s,%s,%s,%s,%s)",
@@ -1321,16 +1370,20 @@ def contribute_with_menu(
                         place_id,
                         d.name.strip()[:180],
                         d.price if d.price is not None else 0,
-                        json.dumps(_clean_ings(d.ingredients), ensure_ascii=False),
+                        json.dumps(ingredients, ensure_ascii=False),
                         (d.note or d.category or "").strip()[:300] or None,
                         None,
                     ),
                 )
+                if not ingredients:
+                    missing_ingredient_ids.append(cur.lastrowid)
             mm = body.menu_meta
             if mm and mm.hours:
                 cur.execute("UPDATE places SET hours_text = %s WHERE id = %s", (mm.hours.strip()[:80], place_id))
             conn.commit()
             record_contribute(user["id"], ip or "unknown")
+            if missing_ingredient_ids:
+                background_tasks.add_task(analyze_dishes_background, missing_ingredient_ids)
             return {
                 "ok": True,
                 "id": place_id,

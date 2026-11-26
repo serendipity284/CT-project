@@ -34,7 +34,7 @@ type Props = {
 function BotAvatar() {
   return (
     <svg className="hx-avatar" viewBox="0 0 80 44" aria-hidden="true">
-      <rect width="80" height="44" fill="#fff" />
+      {/* <rect width="80" height="44" fill="#fff" /> */}
       {/* muỗng */}
       <ellipse cx="9" cy="12" rx="4" ry="5.5" fill="none" stroke="#6b4129" strokeWidth="2" />
       <path d="M9 18v20" stroke="#6b4129" strokeWidth="2.4" strokeLinecap="round" />
@@ -150,12 +150,12 @@ export function ChatHome({
             {turns.map((t, i) => {
               if (i === 0) return null; // lời chào đã hiện ở trên
               const isLastList = t.list && i === turns.map((x) => !!x.list).lastIndexOf(true);
-              // lượt random: hiện đúng các quán đã bốc (theo thứ tự bốc); lượt thường: top 5 theo kết quả lọc
+              // lượt random: hiện đúng các quán đã bốc (theo thứ tự bốc); lượt thường: top 15 theo kết quả lọc
               const shown: ResultPlace[] = t.picks
                 ? t.picks
                     .map((id) => results.find((p) => p.id === id))
                     .filter((p): p is ResultPlace => !!p)
-                : results.slice(0, 5);
+                : results.slice(0, 15);
               return (
                 <div key={i} className="hx-block">
                   <div className={t.role === "bot" ? "hx-row bot" : "hx-row me"}>

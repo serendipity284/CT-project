@@ -86,6 +86,15 @@ import { PlacePage, type PlaceMode } from "./components/PlacePage";
 
 // import { PlaceListView } from "./components/PlaceListView";
 
+import { fbAuth } from "./lib/firebase";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendEmailVerification,
+  updateProfile,
+} from "firebase/auth";
+import { loginWithFirebaseToken } from "./lib/api";
+
 type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
 type MenuFile = { file: File; url: string };
 type ScanMeta = { phone: string; hours: string; notes: string };
@@ -391,31 +400,7 @@ export default function App() {
       .catch(() => setSavedApi([]));
   }, [useApi, user, saved]);
 
-  useEffect(() => {
-  let cancelled = false;
-  const key = user?.id ?? "guest";
-  const autoAsk = () => {
-    if (askedFor.current === key) return;   // tránh hỏi 2 lần (StrictMode)
-    askedFor.current = key;
-    startSurvey(true);
-  };
-  (async () => {
-    if (user && useApi) {
-      try {
-        const p = await fetchPreferenceApi();
-        if (cancelled) return;
-        setPref(p);
-        if (!p.survey_done) autoAsk();
-      } catch { /* token hết hạn */ }
-    } else {
-      const g = getGuestPref();
-      setPref(g ?? DEFAULT_PREFERENCE);
-      if (!g) autoAsk();
-    }
-  })();
-  return () => { cancelled = true; };
-}, [user, useApi]);
-
+ 
   useEffect(() => {
     let cancelled = false;
     const key = user?.id ?? "guest";
@@ -1850,11 +1835,38 @@ function LoginPage({
     setBusy(true);
     try {
       if (useApi) {
-        const data =
-          mode === "up"
-            ? await apiSignup(email, password, name)
-            : await apiLogin(email, password);
-        onDone(data.user);
+        try {
+          const cred =
+            mode === "up"
+              ? await createUserWithEmailAndPassword(fbAuth, email, password)
+              : await signInWithEmailAndPassword(fbAuth, email, password);
+          if (mode === "up") {
+            await updateProfile(cred.user, { displayName: name });
+            await sendEmailVerification(cred.user);
+          }
+          const data = await loginWithFirebaseToken(await cred.user.getIdToken(true));
+          onDone(data.user);
+        } catch (err) {
+          const code = (err as { code?: string }).code;
+          const notInFirebase =
+            code === "auth/invalid-credential" || code === "auth/user-not-found";
+          if (mode === "in" && notInFirebase) {
+            // Có thể là tài khoản cũ (trước khi có Firebase): thử mật khẩu cũ trên MySQL
+            const legacy = await apiLogin(email, password);
+            try {
+              const cred = await createUserWithEmailAndPassword(fbAuth, email, password);
+              await sendEmailVerification(cred.user);
+            } catch {
+              /* đã có trên Firebase thì bỏ qua */
+            }
+            onDone(legacy.user);
+            return;
+          }
+          if (code === "auth/email-already-in-use") {
+            throw new Error('Email này đã có tài khoản. Hãy bấm "Đã có tài khoản? Đăng nhập".');
+          }
+          throw err;
+        }
       } else {
         const res = mode === "up" ? signUp(email, password, name) : signIn(email, password);
         if (!res.ok) setError(res.error);
@@ -1866,7 +1878,6 @@ function LoginPage({
       setBusy(false);
     }
   }
-
   return (
     <main className="login-page">
       <div className="login-card">
@@ -1875,9 +1886,9 @@ function LoginPage({
         </button>
         <h1 className="title">HCMUS Ăn Gì</h1>
         <p className="muted">
-          {useApi
+          {/* {useApi
             ? "Tài khoản lưu trên MySQL qua API Python."
-            : "Chế độ offline — tài khoản chỉ trên trình duyệt này."}
+            : "Chế độ offline — tài khoản chỉ trên trình duyệt này."} */}
         </p>
         <form className="stack" onSubmit={submit}>
           {mode === "up" && (
