@@ -496,13 +496,14 @@ def login(body: LoginIn):
         token = make_token(row["id"], row["email"], bool(row.get("email_verified")))
         return {
             "token": token,
-            "user": {"id": row["id"], "email": row["email"], "name": row["name"], "email_verified": row.get("email_verified")},
-            "user": """{"id": row["id"], "email": row["email"], "name": row["name"]}""" _public_user(row),
+            "user": {
+                **_public_user(row),
+                "email_verified": bool(row.get("email_verified")),
+            },
         }
     finally:
         cur.close()
         conn.close()
-
 class FirebaseIn(BaseModel):
     id_token: str
 GOOGLE_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
