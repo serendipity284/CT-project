@@ -85,6 +85,15 @@ import { PlacePage, type PlaceMode } from "./components/PlacePage";
 
 // import { PlaceListView } from "./components/PlaceListView";
 
+import { fbAuth } from "./lib/firebase";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendEmailVerification,
+  updateProfile,
+} from "firebase/auth";
+import { loginWithFirebaseToken } from "./lib/api";
+
 type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
 type MenuFile = { file: File; url: string };
 type ScanMeta = { phone: string; hours: string; notes: string };
@@ -1823,11 +1832,38 @@ function LoginPage({
     setBusy(true);
     try {
       if (useApi) {
-        const data =
-          mode === "up"
-            ? await apiSignup(email, password, name)
-            : await apiLogin(email, password);
-        onDone(data.user);
+        try {
+          const cred =
+            mode === "up"
+              ? await createUserWithEmailAndPassword(fbAuth, email, password)
+              : await signInWithEmailAndPassword(fbAuth, email, password);
+          if (mode === "up") {
+            await updateProfile(cred.user, { displayName: name });
+            await sendEmailVerification(cred.user);
+          }
+          const data = await loginWithFirebaseToken(await cred.user.getIdToken(true));
+          onDone(data.user);
+        } catch (err) {
+          const code = (err as { code?: string }).code;
+          const notInFirebase =
+            code === "auth/invalid-credential" || code === "auth/user-not-found";
+          if (mode === "in" && notInFirebase) {
+            // Có thể là tài khoản cũ (trước khi có Firebase): thử mật khẩu cũ trên MySQL
+            const legacy = await apiLogin(email, password);
+            try {
+              const cred = await createUserWithEmailAndPassword(fbAuth, email, password);
+              await sendEmailVerification(cred.user);
+            } catch {
+              /* đã có trên Firebase thì bỏ qua */
+            }
+            onDone(legacy.user);
+            return;
+          }
+          if (code === "auth/email-already-in-use") {
+            throw new Error('Email này đã có tài khoản. Hãy bấm "Đã có tài khoản? Đăng nhập".');
+          }
+          throw err;
+        }
       } else {
         const res = mode === "up" ? signUp(email, password, name) : signIn(email, password);
         if (!res.ok) setError(res.error);
@@ -1839,7 +1875,6 @@ function LoginPage({
       setBusy(false);
     }
   }
-
   return (
     <main className="login-page">
       <div className="login-card">

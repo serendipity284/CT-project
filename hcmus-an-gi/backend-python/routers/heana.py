@@ -185,18 +185,11 @@ def fetch_alley_graph_for_place(place_id: int) -> AlleyGraph:
 
 
 # Auth helper (giả định dùng JWT giống app.py hiện tại)
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
-
+from auth_deps import decode_token
 
 def get_current_user_id(authorization: Optional[str] = Header(None)) -> Optional[str]:
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization.split(" ", 1)[1]
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("sub")
-    except JWTError:
-        return None
+    user = decode_token(authorization)
+    return user["id"] if user else None
 
 
 # ------------------------------------------------------------
