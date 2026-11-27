@@ -517,7 +517,6 @@ def login(body: LoginIn):
     finally:
         cur.close()
         conn.close()
-
 class FirebaseIn(BaseModel):
     id_token: str
 GOOGLE_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")

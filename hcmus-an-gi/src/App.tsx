@@ -95,6 +95,8 @@ import {
 } from "firebase/auth";
 import { loginWithFirebaseToken } from "./lib/api";
 
+import { onAuthStateChanged } from "firebase/auth";
+
 type SavedPlace = Place & { dishes: ApiDish[]; menu_meta?: ApiMenuMeta | null };
 type MenuFile = { file: File; url: string };
 type ScanMeta = { phone: string; hours: string; notes: string };
@@ -228,33 +230,27 @@ export default function App() {
   }, [useApi, campus]);
 
   useEffect(() => {
-    if (useApi) {
-      setUser(getApiUser());
-      loadFromApi();
-    } else {
-      setUser(getCurrentUser());
-      setReviews(getReviews());
-      const contribs = getContributions();
-      if (contribs.length) {
-        setPlaces((prev) => {
-          const extra = contribs.map((c) => ({
-            id: c.id,
-            name: c.name,
-            campus: c.campus,
-            lat: c.lat,
-            lng: c.lng,
-            price_min: c.price_min,
-            price_max: c.price_max,
-            cuisine: c.cuisine,
-            address: c.address,
-            hours: c.hours,
-          }));
-          const ids = new Set(extra.map((e) => e.id));
-          return [...extra, ...prev.filter((p) => !ids.has(p.id))];
-        });
-      }
-    }
-  }, [useApi, loadFromApi]);
+  if (!useApi) return;
+
+  async function syncVerification() {
+    const u = fbAuth.currentUser;
+    if (!u) return;
+    await u.reload();                       // lấy trạng thái mới nhất từ Firebase
+    if (!u.emailVerified) return;
+    const stored = getApiUser() as { email_verified?: boolean } | null;
+    if (stored?.email_verified) return;     // đã đồng bộ rồi, khỏi gọi lại
+    const data = await loginWithFirebaseToken(await u.getIdToken(true));
+    setUser(data.user);                     // JWT mới có ev = true, DB cập nhật = 1
+  }
+
+  const run = () => { void syncVerification().catch(() => {}); };
+  const unsub = onAuthStateChanged(fbAuth, run);   // khi mở lại trang
+  window.addEventListener("focus", run);           // khi quay lại từ tab email
+  return () => {
+    unsub();
+    window.removeEventListener("focus", run);
+  };
+}, [useApi]);
 
   useEffect(() => {
     if (!user) {
