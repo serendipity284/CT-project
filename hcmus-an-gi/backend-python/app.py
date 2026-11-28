@@ -70,13 +70,8 @@ if not firebase_admin._apps:
 
 load_dotenv()
 
-MYSQL = {
-    "host": os.getenv("MYSQL_HOST", "127.0.0.1"),
-    "port": int(os.getenv("MYSQL_PORT", "3306")),
-    "user": os.getenv("MYSQL_USER", "root"),
-    "password": os.getenv("MYSQL_PASSWORD", ""),
-    "database": os.getenv("MYSQL_DATABASE", "hcmus_an_gi"),
-}
+from db_config import MYSQL
+
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 def hash_password(password: str) -> str:
     pwd_bytes = password.encode("utf-8")[:72]

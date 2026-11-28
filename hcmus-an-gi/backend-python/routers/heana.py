@@ -50,15 +50,10 @@ router = APIRouter(tags=["HEANA"])
 # Ở đây để demo logic, ta giả định có các hàm fetch_*.
 
 def get_db_connection():
-    """Placeholder - thay bằng connection pool thật."""
     import mysql.connector
-    return mysql.connector.connect(
-        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-        port=int(os.getenv("MYSQL_PORT", "3306")),
-        user=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASSWORD", ""),
-        database=os.getenv("MYSQL_DATABASE", "hcmus_an_gi"),
-    )
+    from db_config import MYSQL
+
+    return mysql.connector.connect(**MYSQL)
 
 
 def fetch_places(campus: Optional[str] = None) -> list[dict]:
